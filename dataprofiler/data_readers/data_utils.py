@@ -1,4 +1,5 @@
 """Contains functions for data readers."""
+
 import json
 import logging
 import os
@@ -52,7 +53,7 @@ def data_generator(data_list: List[str]) -> Generator[str, None, None]:
 
 
 def generator_on_file(
-    file_object: Union[StringIO, BytesIO]
+    file_object: Union[StringIO, BytesIO],
 ) -> Generator[Union[str, bytes], None, None]:
     """
     Take a file and return a generator that returns lines.
@@ -103,7 +104,7 @@ def unicode_to_str(data: JSONType, ignore_dicts: bool = False) -> JSONType:
     :rtype: str
     """
     if isinstance(data, str):
-        return data.encode("utf-8").decode()
+        return data
 
     # if data is a list of values
     if isinstance(data, list):
