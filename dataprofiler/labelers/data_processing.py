@@ -1,4 +1,5 @@
 """Contains pre-built processors for data labeling/processing."""
+
 from __future__ import annotations
 
 import abc
@@ -173,9 +174,11 @@ class BaseDataPreprocessor(BaseDataProcessor):
         labels: np.ndarray | None = None,
         label_mapping: dict[str, int] | None = None,
         batch_size: int = 32,
-    ) -> Generator[tuple[np.ndarray, np.ndarray] | np.ndarray, None, None] | tuple[
-        np.ndarray, np.ndarray
-    ] | np.ndarray:
+    ) -> (
+        Generator[tuple[np.ndarray, np.ndarray] | np.ndarray, None, None]
+        | tuple[np.ndarray, np.ndarray]
+        | np.ndarray
+    ):
         """Preprocess data."""
         raise NotImplementedError()
 
@@ -1154,6 +1157,7 @@ class CharPostprocessor(BaseDataPostprocessor, metaclass=AutoSubRegistrationMeta
 
         default_ind = label_mapping[default_label]
         pad_ind = label_mapping[pad_label]
+        skip_labels = {pad_ind, default_ind}
 
         # Loop through character_predictions
         for index, sample in enumerate(predictions):
@@ -1175,11 +1179,9 @@ class CharPostprocessor(BaseDataPostprocessor, metaclass=AutoSubRegistrationMeta
                             )
                         )
                         # Reset for next iteration
-                        begin_idx = (
-                            -1 if curr_label in [pad_ind, default_ind] else curr_idx
-                        )
+                        begin_idx = -1 if curr_label in skip_labels else curr_idx
                 # Check if need to set a new begin
-                elif curr_label not in [pad_ind, default_ind]:
+                elif curr_label not in skip_labels:
                     begin_idx = curr_idx
             # Check for properly labeling at end of list
             if begin_idx != -1:
@@ -1947,9 +1949,11 @@ class RegexPostProcessor(BaseDataPostprocessor, metaclass=AutoSubRegistrationMet
                 # being changed and is already set
                 aggregation_func = parameters.get(
                     "aggregation_func",
-                    self._parameters.get("aggregation_func")
-                    if hasattr(self, "_parameters")
-                    else None,
+                    (
+                        self._parameters.get("aggregation_func")
+                        if hasattr(self, "_parameters")
+                        else None
+                    ),
                 )
                 if value is None and aggregation_func == "priority":
                     errors.append(
