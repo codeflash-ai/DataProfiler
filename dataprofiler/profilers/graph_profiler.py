@@ -1,4 +1,5 @@
 """Class and functions to calculate and profile properties of graph data."""
+
 from __future__ import annotations
 
 import importlib
@@ -499,11 +500,7 @@ class GraphProfiler:
 
     def _attribute_data_as_list(self, graph: nx.Graph, attribute: str) -> list:
         """Fetch graph attribute data and convert it to a readable list."""
-        data_as_list = []
-        for u, v in list(graph.edges):
-            value = graph[u][v][attribute]
-            data_as_list.append(value)
-        return data_as_list
+        return [graph[u][v][attribute] for u, v in graph.edges]
 
     def _save_helper(self, filepath: str | None, data_dict: dict) -> None:
         """
