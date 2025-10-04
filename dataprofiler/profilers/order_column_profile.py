@@ -1,4 +1,5 @@
 """Index profile analysis for individual col within structured profiling."""
+
 from __future__ import annotations
 
 from abc import abstractmethod
@@ -203,43 +204,35 @@ class OrderColumn(BaseColumnProfiler["OrderColumn"]):
         if order1 == "random" or order2 == "random":
             order = "random"
 
-        # Neither Random
         elif order1 == order2:
             if not is_intersecting or (piecewise1 and piecewise2):
                 order = order1
-            elif (
-                piecewise1 and self_envelopes_other
-            ):  # Intersect and not both piecewise
+            elif piecewise1 and self_envelopes_other:
                 order = order1
             elif piecewise2 and other_envelopes_self:
                 order = order1
-            elif order1 == "constant value":  # Constants that intersect
+            elif order1 == "constant value":
                 order = order1
-            else:  # Ascending/Descending that intersect but not both piecewise
-                # and dont envelope one or the other
+            else:
                 order = "random"
 
-        # Neither Random, nor the same order
         elif (order1 == "ascending" and order2 == "descending") or (
             order1 == "descending" and order2 == "ascending"
         ):
             order = "random"
 
-        # One must be ascending/descending and one must be constant
         elif not is_intersecting:
             if order1 == "ascending" or order2 == "ascending":
                 order = "ascending"
-            else:  # order1 == 'descending' or order2 =='descending'
+            else:
                 order = "descending"
 
-        # One must be ascending/descending and one must be constant and they
-        # are intersecting
         else:
-            if order1 == "constant value" and piecewise2:  # order2 ascend/descend
+            if order1 == "constant value" and piecewise2:
                 order = order2
-            elif order2 == "constant value" and piecewise1:  # order1 ascend/descend
+            elif order2 == "constant value" and piecewise1:
                 order = order1
-            else:  # intersecting constant with non-piecewise ascend/descend
+            else:
                 order = "random"
 
         # Set variables
@@ -385,32 +378,70 @@ class OrderColumn(BaseColumnProfiler["OrderColumn"]):
         :return: order, first_value, last_value, data_store_type
         :rtype: String, Float, Float, type, Type[str] | Type[np.float64]
         """
+        # Fast path: try to avoid Python loop with NumPy for numeric/non-object
+        # This covers most numeric, non-mixed columns, used heavily in tabular data
         try:
             if data_store_type is not str:
-                df_series = df_series.astype(float)
-        except ValueError:
+                # Try conversion up front, fall back if fails
+                arr = df_series.values
+                # If already float dtype, this is fast, else .astype() to safe float
+                if not np.issubdtype(arr.dtype, np.floating):
+                    arr = arr.astype(float)
+                else:
+                    arr = arr  # no-op, keep as view
+                data_store_type = np.float64
+                _first = arr[0]
+                _last = arr[0]
+                n = arr.size
+                # Vectorized check for constant
+                all_equal = np.all(arr == arr[0])
+                if all_equal:
+                    return "constant value", _first, _last, data_store_type
+                # Vectorized checks for monotonicity (strictly or non-strictly)
+                asc = np.all(arr[:-1] <= arr[1:])
+                desc = np.all(arr[:-1] >= arr[1:])
+                if asc and not desc:
+                    return "ascending", _first, arr[-1], data_store_type
+                if desc and not asc:
+                    return "descending", _first, arr[-1], data_store_type
+                return "random", _first, arr[-1], data_store_type
+        except Exception:
             data_store_type = str
 
-        order = None
-        last_value = df_series.iloc[0]
-        first_value = df_series.iloc[0]
+        # Fallback for non-numeric (object/str or any conversion failure)
+        arr = df_series.values
+        _first = arr[0]
+        _last = arr[0]
 
-        for value in df_series.values:
-            if value < last_value and order == "ascending":
+        n = arr.shape[0]
+        # Optimize for all equal (constant value)
+        constant = True
+        for i in range(1, n):
+            if arr[i] != _first:
+                constant = False
+                break
+        if constant:
+            return "constant value", _first, _last, data_store_type
+
+        # Now try to determine order (ascending, descending, or random)
+        order = None
+        prev = _first
+        for i in range(1, n):
+            value = arr[i]
+            if value < prev and order == "ascending":
                 order = "random"
                 break
-            elif value < last_value and order is None:
+            elif value < prev and order is None:
                 order = "descending"
-            elif value > last_value and order == "descending":
+            elif value > prev and order == "descending":
                 order = "random"
                 break
-            elif value > last_value and order is None:
+            elif value > prev and order is None:
                 order = "ascending"
-            last_value = value
+            prev = value
         if not order:
             order = "constant value"
-
-        return order, first_value, last_value, data_store_type
+        return order, _first, arr[-1], data_store_type
 
     def _update_order(
         self,
