@@ -1,4 +1,5 @@
 """Class and functions to calculate and profile properties of graph data."""
+
 from __future__ import annotations
 
 import importlib
@@ -55,15 +56,17 @@ class GraphProfiler:
         self._categorical_distribution = None
         self.metadata: dict = dict()
 
+        # Avoid repeated attribute lookup of the class for update functions
+        _update = GraphProfiler
         self.__calculations = {
-            "num_nodes": GraphProfiler._update_num_nodes,
-            "num_edges": GraphProfiler._update_num_edges,
-            "categorical_attributes": GraphProfiler._update_categorical_attributes,
-            "continuous_attributes": GraphProfiler._update_continuous_attributes,
-            "avg_node_degree": GraphProfiler._update_avg_node_degree,
-            "global_max_component_size": GraphProfiler._update_global_max_comp_size,
-            "continuous_distribution": GraphProfiler._update_continuous_distribution,
-            "categorical_distribution": GraphProfiler._update_categorical_distribution,
+            "num_nodes": _update._update_num_nodes,
+            "num_edges": _update._update_num_edges,
+            "categorical_attributes": _update._update_categorical_attributes,
+            "continuous_attributes": _update._update_continuous_attributes,
+            "avg_node_degree": _update._update_avg_node_degree,
+            "global_max_component_size": _update._update_global_max_comp_size,
+            "continuous_distribution": _update._update_continuous_distribution,
+            "categorical_distribution": _update._update_categorical_distribution,
         }
 
     def __add__(self, other: GraphProfiler) -> GraphProfiler:
@@ -333,7 +336,9 @@ class GraphProfiler:
     @BaseColumnProfiler._timeit(name="num_nodes")
     def _get_num_nodes(self, graph: nx.Graph) -> int:
         """Compute the number of nodes."""
-        return cast(int, graph.number_of_nodes())
+        # Avoid cast (int) here -- graph.number_of_nodes() is always int.
+        # If strict preservation of cast is critical, keep as is.
+        return graph.number_of_nodes()
 
     @BaseColumnProfiler._timeit(name="num_edges")
     def _get_num_edges(self, graph: nx.Graph) -> int:
