@@ -1,4 +1,5 @@
 """Class and functions to calculate and profile properties of graph data."""
+
 from __future__ import annotations
 
 import importlib
@@ -158,7 +159,7 @@ class GraphProfiler:
         """
         calcs_dict_keys = self.__calculations.keys()
         profile = self.profile
-        list_keys = [
+        list_keys = (
             "num_nodes",
             "num_edges",
             "categorical_attributes",
@@ -167,16 +168,20 @@ class GraphProfiler:
             "global_max_component_size",
             "continuous_distribution",
             "categorical_distribution",
-        ]
+        )
 
         if remove_disabled_flag:
-            profile_keys = list(profile.keys())
-            for profile_key in profile_keys:
-                # need to add props
-                if profile_key in list_keys:
-                    if profile_key in calcs_dict_keys:
-                        continue
-                profile.pop(profile_key)
+            # Avoid repeated lookups by using sets, which are highly efficient for membership testing
+            list_keys_set = set(list_keys)
+            calcs_dict_keys_set = set(calcs_dict_keys)
+            # Instead of iterating and popping inside loop, collect to_delete first for bulk removal
+            to_delete = []
+            for profile_key in list(profile.keys()):
+                if profile_key in list_keys_set and profile_key in calcs_dict_keys_set:
+                    continue
+                to_delete.append(profile_key)
+            for key in to_delete:
+                profile.pop(key)
         return profile
 
     def _update_helper(self, profile: dict) -> None:
