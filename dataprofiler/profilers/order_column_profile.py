@@ -1,4 +1,5 @@
 """Index profile analysis for individual col within structured profiling."""
+
 from __future__ import annotations
 
 from abc import abstractmethod
@@ -80,23 +81,26 @@ class OrderColumn(BaseColumnProfiler["OrderColumn"]):
         :return: Whether or not there is an intersection
         :rtype: Bool
         """
-        # Some values may be in descending order so the true min/max must be
-        # found
-        low_value1 = min(first_value1, last_value1)
-        high_value1 = max(first_value1, last_value1)
-        low_value2 = min(first_value2, last_value2)
-        high_value2 = max(first_value2, last_value2)
-        is_intersecting = False
+        # Min/max value computations are repeated, so precompute to avoid recomputing
+        low1, high1 = (
+            (first_value1, last_value1)
+            if first_value1 <= last_value1
+            else (last_value1, first_value1)
+        )
+        low2, high2 = (
+            (first_value2, last_value2)
+            if first_value2 <= last_value2
+            else (last_value2, first_value2)
+        )
 
-        if (
-            (low_value2 < low_value1 < high_value2)
-            or (low_value2 < high_value1 < high_value2)
-            or (low_value1 < low_value2 < high_value1)
-            or (low_value1 < high_value2 < high_value1)
-            or (low_value1 == low_value2 and high_value1 == high_value2)
-        ):
-            is_intersecting = True
-        return is_intersecting
+        # All checks expressed as range overlaps (most common path first)
+        # Avoid extra variable(s)/branching
+        # Perf: Reduce to a single comparison when possible
+        if (low2 < high1 and low1 < high2) or (  # Overlapping ranges
+            low1 == low2 and high1 == high2
+        ):  # Identical
+            return True
+        return False
 
     @staticmethod
     def _is_enveloping(
@@ -119,16 +123,18 @@ class OrderColumn(BaseColumnProfiler["OrderColumn"]):
         :return: Whether or not there is an intersection
         :rtype: Bool
         """
-        # Some values may be in descending order so the true min/max must be
-        # found
-        low_value1 = min(first_value1, last_value1)
-        high_value1 = max(first_value1, last_value1)
-        low_value2 = min(first_value2, last_value2)
-        high_value2 = max(first_value2, last_value2)
-        is_enveloping = False
-        if low_value1 < low_value2 and high_value1 > high_value2:
-            is_enveloping = True
-        return is_enveloping
+        low1, high1 = (
+            (first_value1, last_value1)
+            if first_value1 <= last_value1
+            else (last_value1, first_value1)
+        )
+        low2, high2 = (
+            (first_value2, last_value2)
+            if first_value2 <= last_value2
+            else (last_value2, first_value2)
+        )
+        # Fast bool cast, remove variable allocation
+        return low1 < low2 and high1 > high2
 
     @BaseColumnProfiler._timeit(name="order")
     def _merge_order(
@@ -171,20 +177,27 @@ class OrderColumn(BaseColumnProfiler["OrderColumn"]):
         :rtype: String, Float | String, Float | String, Boolean, Type[str]
             | Type[np.float64]
         """
-        # Return either order if one is None
+        # Shortcut for None orders (most common branch first)
         if not order1:
             return order2, first_value2, last_value2, piecewise2, data_store_type2
-        elif not order2:
+        if not order2:
             return order1, first_value1, last_value1, piecewise1, data_store_type1
 
+        # Ensure type and casting is performed only when needed
         merged_data_store_type: AliasStrType | AliasFloatType = np.float64
         if data_store_type1 is str or data_store_type2 is str:
-            first_value1 = cast(CT, str(first_value1))
-            last_value1 = cast(CT, str(last_value1))
-            first_value2 = cast(CT, str(first_value2))
-            last_value2 = cast(CT, str(last_value2))
+            # Avoid redundant casting
+            if not isinstance(first_value1, str):
+                first_value1 = cast(CT, str(first_value1))
+            if not isinstance(last_value1, str):
+                last_value1 = cast(CT, str(last_value1))
+            if not isinstance(first_value2, str):
+                first_value2 = cast(CT, str(first_value2))
+            if not isinstance(last_value2, str):
+                last_value2 = cast(CT, str(last_value2))
             merged_data_store_type = str
 
+        # Precompute the results of intersection and enveloping for branching
         is_intersecting = self._is_intersecting(
             first_value1, last_value1, first_value2, last_value2
         )
@@ -196,68 +209,68 @@ class OrderColumn(BaseColumnProfiler["OrderColumn"]):
         )
 
         # Default initialization
-        order = "random"
+        order = None
         first_value: CT | None = None
         last_value: CT | None = None
 
+        # Fast path: one random
         if order1 == "random" or order2 == "random":
             order = "random"
-
-        # Neither Random
+        # Both have same non-random order
         elif order1 == order2:
             if not is_intersecting or (piecewise1 and piecewise2):
                 order = order1
-            elif (
-                piecewise1 and self_envelopes_other
-            ):  # Intersect and not both piecewise
+            elif piecewise1 and self_envelopes_other:
                 order = order1
             elif piecewise2 and other_envelopes_self:
                 order = order1
-            elif order1 == "constant value":  # Constants that intersect
+            elif order1 == "constant value":
                 order = order1
-            else:  # Ascending/Descending that intersect but not both piecewise
-                # and dont envelope one or the other
+            else:
                 order = "random"
-
-        # Neither Random, nor the same order
+        # Opposing order
         elif (order1 == "ascending" and order2 == "descending") or (
             order1 == "descending" and order2 == "ascending"
         ):
             order = "random"
-
-        # One must be ascending/descending and one must be constant
+        # Non-intersecting: escalate
         elif not is_intersecting:
             if order1 == "ascending" or order2 == "ascending":
                 order = "ascending"
-            else:  # order1 == 'descending' or order2 =='descending'
+            else:
                 order = "descending"
-
-        # One must be ascending/descending and one must be constant and they
-        # are intersecting
+        # One is constant value and piecewise, other ascend/descend and intersect
         else:
-            if order1 == "constant value" and piecewise2:  # order2 ascend/descend
+            if order1 == "constant value" and piecewise2:
                 order = order2
-            elif order2 == "constant value" and piecewise1:  # order1 ascend/descend
+            elif order2 == "constant value" and piecewise1:
                 order = order1
-            else:  # intersecting constant with non-piecewise ascend/descend
+            else:
                 order = "random"
 
-        # Set variables
+        # Compute new first/last values efficiently for each order branch
         if order == "ascending":
-            first_value = min(first_value1, first_value2)
-            last_value = max(last_value1, last_value2)
+            # Only need to test two values each (ascending ensures > or equal order)
+            # Avoid redundant min/max by using simple comparisons
+            first_value = first_value1 if first_value1 <= first_value2 else first_value2
+            last_value = last_value1 if last_value1 >= last_value2 else last_value2
         elif order == "descending":
-            first_value = max(first_value1, first_value2)
-            last_value = min(last_value1, last_value2)
-        elif order == "random" or order == "constant value":
-            first_value = min(first_value1, first_value2, last_value1, last_value2)
-            last_value = max(first_value1, first_value2, last_value1, last_value2)
+            first_value = first_value1 if first_value1 >= first_value2 else first_value2
+            last_value = last_value1 if last_value1 <= last_value2 else last_value2
+        elif order in ("random", "constant value"):
+            # Minor perf improvement: avoid quadruple function call, use sorted + direct selection
+            # But since we can't mutably sort for type reasons, just min/max all at once
+            vals = (first_value1, first_value2, last_value1, last_value2)
+            first_value = min(vals)
+            last_value = max(vals)
 
-        piecewise = True
-        if (
-            order == "constant value" and first_value == last_value
-        ) or order == "random":
+        # Avoid redundant variable assignment (and a branch)
+        if order == "constant value" and first_value == last_value:
             piecewise = False
+        elif order == "random":
+            piecewise = False
+        else:
+            piecewise = True
 
         return order, first_value, last_value, piecewise, merged_data_store_type
 
