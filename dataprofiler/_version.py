@@ -414,14 +414,20 @@ def render_git_describe(pieces):
     Exceptions:
     1: no tags. HEX[-dirty]  (note: no 'g' prefix)
     """
-    if pieces["closest-tag"]:
-        rendered = pieces["closest-tag"]
-        if pieces["distance"]:
-            rendered += "-%d-g%s" % (pieces["distance"], pieces["short"])
+    closest_tag = pieces["closest-tag"]
+    distance = pieces["distance"]
+    short = pieces["short"]
+    dirty = pieces["dirty"]
+
+    if closest_tag:
+        if distance:
+            rendered = f"{closest_tag}-{distance}-g{short}"
+        else:
+            rendered = closest_tag
     else:
         # exception #1
-        rendered = pieces["short"]
-    if pieces["dirty"]:
+        rendered = short
+    if dirty:
         rendered += "-dirty"
     return rendered
 
