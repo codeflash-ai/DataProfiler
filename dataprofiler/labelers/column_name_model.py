@@ -1,4 +1,5 @@
 """Contains class for column name data labeling model."""
+
 from __future__ import annotations
 
 import json
@@ -8,6 +9,7 @@ from typing import Any, Callable
 import numpy as np
 
 from dataprofiler._typing import DataArray
+from dataprofiler.labelers.base_model import AutoSubRegistrationMeta, BaseModel
 
 try:
     import rapidfuzz
@@ -161,12 +163,12 @@ class ColumnNameModel(BaseModel, metaclass=AutoSubRegistrationMeta):
             rapidfuzz.fuzz.token_sort_ratio,
         )
 
-        list_of_column_names_filtered = []
-        for i in range(len(list_of_column_names)):
-            if scores[i][0] < negative_threshold:
-                list_of_column_names_filtered.append(list_of_column_names[i])
-
-        return list_of_column_names_filtered
+        # Optimize creation of filtered list using list comprehension
+        return [
+            col_name
+            for col_name, score in zip(list_of_column_names, scores)
+            if score[0] < negative_threshold
+        ]
 
     def _construct_model(self) -> None:
         pass
