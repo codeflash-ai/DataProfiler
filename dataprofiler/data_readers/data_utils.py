@@ -9,18 +9,8 @@ from collections import OrderedDict
 from io import BytesIO, StringIO, TextIOWrapper
 from itertools import islice
 from math import floor, log, log1p
-from typing import (
-    Any,
-    Dict,
-    Generator,
-    Iterator,
-    List,
-    Optional,
-    Pattern,
-    Tuple,
-    Union,
-    cast,
-)
+from typing import (Any, Dict, Generator, Iterator, List, Optional, Pattern,
+                    Tuple, Union, cast)
 
 import boto3
 import botocore
@@ -603,13 +593,12 @@ def detect_file_encoding(
     :rtype: str
     """
     detector = UniversalDetector()
-    line_count = 0
+    bytes_to_read = max_lines * buffer_size
+    # Read up to bytes_to_read in one go to avoid repeated .feed()
     with FileOrBufferHandler(file_path, "rb") as input_file:
-        chunk = input_file.read(buffer_size)
-        while chunk and line_count < max_lines:
-            detector.feed(chunk)
-            chunk = input_file.read(buffer_size)
-            line_count += 1
+        content = input_file.read(bytes_to_read)
+        if content:
+            detector.feed(content)
     detector.close()
     encoding = detector.result["encoding"]
 
