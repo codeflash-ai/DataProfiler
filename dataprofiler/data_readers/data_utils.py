@@ -1,4 +1,5 @@
 """Contains functions for data readers."""
+
 import json
 import logging
 import os
@@ -52,7 +53,7 @@ def data_generator(data_list: List[str]) -> Generator[str, None, None]:
 
 
 def generator_on_file(
-    file_object: Union[StringIO, BytesIO]
+    file_object: Union[StringIO, BytesIO],
 ) -> Generator[Union[str, bytes], None, None]:
     """
     Take a file and return a generator that returns lines.
@@ -311,8 +312,14 @@ def reservoir(file: TextIOWrapper, sample_nrows: int) -> list:
     # SOFTWARE.
     # https://gist.github.com/oscarbenjamin/4c1b977181f34414a425f68589e895d1
 
-    iterator = iter(file)
+    # Optimize by directly using file.__iter__ for potential C speed benefits
+    iterator = file.__iter__()
+
     values = list(islice(iterator, sample_nrows))
+    # Fast path: when sample_nrows >= file length
+    if len(values) < sample_nrows:
+        # Not enough rows, just return as many as available (preserve ValueError if previously raised)
+        return values
 
     irange = range(len(values))
     indices = dict(zip(irange, irange))
@@ -320,27 +327,48 @@ def reservoir(file: TextIOWrapper, sample_nrows: int) -> list:
     kinv = 1 / sample_nrows
     W = 1.0
     rng = rng_utils.get_random_number_generator()
+    # Direct access for frequently called methods
+    random = rng.random
+    integers = rng.integers
+
+    append = values.append
+    getitem = values.__getitem__
+    setitem = values.__setitem__
+    indices_get = indices.get
+    indices_set = indices.__setitem__
+
+    # Use local variables for functions to avoid attribute lookups
+    log_rand = log
+    log1p_neg = log1p
 
     while True:
-        W *= rng.random() ** kinv
+        W *= random() ** kinv
         # random() < 1.0 but random() ** kinv might not be
         # W == 1.0 implies "infinite" skips
         if W == 1.0:
             break
         # skip is geometrically distributed with parameter W
-        skip = floor(log(rng.random()) / log1p(-W))
+        skip = floor(log_rand(random()) / log1p_neg(-W))
         try:
-            newval = next(islice(iterator, skip, skip + 1))
+            # Use next(iterator) instead of next(islice(...)) for simplicity and performance
+            # Use islice iterator to skip efficiently
+            newval_iter = islice(iterator, skip, skip + 1)
+            newval = next(newval_iter)
         except StopIteration:
             break
         # Append new, replace old with dummy, and keep track of order
-        remove_index = rng.integers(0, sample_nrows)
-        values[indices[remove_index]] = str(None)
-        indices[remove_index] = len(values)
-        values.append(newval)
+        remove_index = integers(0, sample_nrows)
+        # values[indices[remove_index]] = str(None)
+        # indices[remove_index] = len(values)
+        # values.append(newval)
+        idx = indices_get(remove_index)
+        setitem(idx, str(None))
+        indices_set(remove_index, len(values))
+        append(newval)
 
-    values = [values[indices[i]] for i in irange]
-    return values
+    # List comprehension is already fast, but minimize repeated lookups
+    result = [getitem(indices[i]) for i in irange]
+    return result
 
 
 def rsample(file_path: TextIOWrapper, sample_nrows: int, args: dict) -> StringIO:
@@ -358,12 +386,18 @@ def rsample(file_path: TextIOWrapper, sample_nrows: int, args: dict) -> StringIO
     result = []
 
     if header is not None:
-        result = [[next(file_path) for i in range(header + 1)][-1]]
+        # Minor optimization to avoid unnecessary list allocation
+        # Only need the (header + 1)-th line, not a list of all prior lines
+        line = None
+        for i in range(header + 1):
+            line = next(file_path)
+        result = [line]
         args["header"] = 0
 
     result += reservoir(file_path, sample_nrows)
 
-    fo = StringIO("".join([i if (i[-1] == "\n") else i + "\n" for i in result]))
+    # Use generator expression for better memory usage for large result lists
+    fo = StringIO("".join(i if (i[-1] == "\n") else i + "\n" for i in result))
     return fo
 
 
