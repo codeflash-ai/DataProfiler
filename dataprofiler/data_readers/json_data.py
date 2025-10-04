@@ -1,4 +1,5 @@
 """Contains class to save and load json data."""
+
 import json
 import re
 import warnings
@@ -71,9 +72,9 @@ class JSONData(SpreadSheetDataMixin, BaseData):
 
         self._data_formats["records"] = self._get_data_as_records
         self._data_formats["json"] = self._get_data_as_json
-        self._data_formats[
-            "flattened_dataframe"
-        ] = self._get_data_as_flattened_dataframe
+        self._data_formats["flattened_dataframe"] = (
+            self._get_data_as_flattened_dataframe
+        )
         self._selected_data_format: str = options.get(
             "data_format", "flattened_dataframe"
         )
@@ -122,31 +123,37 @@ class JSONData(SpreadSheetDataMixin, BaseData):
         :type path: str
         :return: list of dicts of {column headers: values}
         """
-        if path != "" and path[-len(self._key_separator) :] != self._key_separator:
-            path = path + self._key_separator
+        # Use efficient list appends and avoid list concatenation
+        result = []
+        key_separator = self._key_separator
+        # Precompute path with key separator only if needed
+        if path != "" and not path.endswith(key_separator):
+            path = path + key_separator
 
-        list_of_dict = []
         if isinstance(json_data, dict):
-            for key in json_data:
-                if isinstance(json_data[key], dict) or isinstance(json_data[key], list):
-                    list_of_dict = list_of_dict + self._find_data(
-                        json_data[key], path + key
-                    )
+            for key, value in json_data.items():
+                if isinstance(value, (dict, list)):
+                    result.extend(self._find_data(value, path + key))
                 else:
-                    list_of_dict = list_of_dict + [{path + key: json_data[key]}]
+                    result.append({path + key: value})
         elif isinstance(json_data, list):
-            if all(isinstance(x, dict) for x in json_data):
-                for key in json_data:
-                    list_of_dict = list_of_dict + self._find_data(key, path)
+            # Avoid repeated all() calls by early exit and generator
+            dict_type = dict
+            # Faster - use generator and short-circuit for all(dict)
+            is_list_of_dicts = True
+            for x in json_data:
+                if not isinstance(x, dict_type):
+                    is_list_of_dicts = False
+                    break
+            if is_list_of_dicts:
+                for item in json_data:
+                    result.extend(self._find_data(item, path))
             else:
-                list_of_dict = list_of_dict + [
-                    {path[: -len(self._key_separator)]: json_data}
-                ]
+                # Only one entry
+                result.append({path[: -len(key_separator)]: json_data})
         else:
-            list_of_dict = list_of_dict + [
-                {path[: -len(self._key_separator)]: json_data}
-            ]
-        return list_of_dict
+            result.append({path[: -len(key_separator)]: json_data})
+        return result
 
     def _coalesce_dicts(self, list_of_dicts):
         """
