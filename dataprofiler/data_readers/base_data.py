@@ -1,4 +1,5 @@
 """Contains abstract class for data loading and saving."""
+
 import locale
 import sys
 from collections import OrderedDict
@@ -59,7 +60,7 @@ class BaseData:
         self._data_formats: Dict[str, Any] = OrderedDict()
         self._selected_data_format: Optional[str] = None
         self._data: Optional[Any] = data
-        self._batch_info: Dict = dict(perm=list(), iter=0)
+        self._batch_info: Dict = dict(perm=[], iter=0)
         self._tmp_file_name: Optional[str] = None
         self._file_encoding: Optional[str] = options.get("encoding", None)
 
@@ -139,11 +140,14 @@ class BaseData:
     @staticmethod
     def _check_and_return_options(options: Optional[Dict]) -> Dict:
         """Return options or raise error."""
+        # Fast path: if it's already a dict, just return it
+        if isinstance(options, dict):
+            return options
+        # None and Falsy values are replaced with an empty dict
         if not options:
-            options = dict()
-        elif not isinstance(options, dict):
-            raise ValueError("Options must be a dictionary.")
-        return options
+            return {}
+        # Any non-dict not covered above is invalid
+        raise ValueError("Options must be a dictionary.")
 
     def _load_data(self, data: Optional[Any] = None) -> None:
         """Load data."""
