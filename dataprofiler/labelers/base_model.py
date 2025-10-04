@@ -1,4 +1,5 @@
 """Contains abstract classes for labeling data."""
+
 from __future__ import annotations
 
 import abc
@@ -151,12 +152,8 @@ class BaseModel(metaclass=abc.ABCMeta):
     @classmethod
     def get_class(cls, class_name: str) -> type[BaseModel] | None:
         """Get subclasses."""
-        # Import possible internal models
-        from .character_level_cnn_model import CharacterLevelCnnModel  # NOQA
-        from .column_name_model import ColumnNameModel  # NOQA
-        from .regex_model import RegexModel  # NOQA
 
-        return cls.__subclasses.get(class_name.lower(), None)
+        return cls._BaseModel__subclasses.get(class_name.lower(), None)
 
     def get_parameters(self, param_list: list[str] | None = None) -> dict:
         """
