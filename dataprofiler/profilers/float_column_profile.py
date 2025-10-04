@@ -1,4 +1,5 @@
 """Float profile analysis for individual col within structured profiling."""
+
 from __future__ import annotations
 
 import copy
@@ -336,9 +337,15 @@ class FloatColumn(
         :return: is_float_col
         :rtype: Union[List[bool], pandas.Series[bool]]
         """
-        if len(df_series) == 0:
-            return list()
-        return df_series.map(NumericStatsMixin.is_float).astype("bool")
+        arr = df_series.values
+        result = np.empty(len(arr), dtype=bool)
+        for i, v in enumerate(arr):
+            try:
+                float(v)
+                result[i] = True
+            except ValueError:
+                result[i] = False
+        return result
 
     @BaseColumnProfiler._timeit(name="precision")
     def _update_precision(
@@ -439,24 +446,24 @@ class FloatColumn(
         :return: updated FloatColumn
         :rtype: FloatColumn
         """
-        if len(df_series) == 0:
+        n = len(df_series)
+        if n == 0:
             return self
 
         is_each_row_float = self._is_each_row_float(df_series)
-        sample_size = len(is_each_row_float)
+        sample_size = n
         float_count = np.sum(is_each_row_float)
         profile = dict(match_count=float_count, sample_size=sample_size)
+        float_series = df_series[is_each_row_float]
 
         BaseColumnProfiler._perform_property_calcs(
             self,
             self.__calculations,
-            df_series=df_series[is_each_row_float],
+            df_series=float_series,
             prev_dependent_properties={},
             subset_properties=profile,
         )
 
-        self._update_helper(
-            df_series_clean=df_series[is_each_row_float], profile=profile
-        )
+        self._update_helper(df_series_clean=float_series, profile=profile)
 
         return self
