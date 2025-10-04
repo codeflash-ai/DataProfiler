@@ -1,4 +1,5 @@
 """Contains helper functions for generating report."""
+
 from __future__ import annotations
 
 import math
@@ -53,15 +54,20 @@ def flat_dict(od: dict, separator: str = "_", key: str = "") -> dict:
     :returns: unnested dictionary
     :rtype: dict
     """
-    return (
-        {
-            str(key).replace(" ", "_") + separator + str(k) if key else k: v
-            for kk, vv in od.items()
-            for k, v in flat_dict(vv, separator, kk).items()
-        }
-        if isinstance(od, dict)
-        else {key: od}
-    )
+    if not isinstance(od, dict):
+        return {key: od}
+    # Avoid excessive temporary dicts with a single result accumulator
+    items = []
+    key_prefix = str(key).replace(" ", "_") + separator if key else ""
+    for k, v in od.items():
+        new_key = key_prefix + str(k) if key_prefix or key else k
+        if isinstance(v, dict):
+            # Avoid function call/stack overhead for single-level values
+            for nk, nv in flat_dict(v, separator, new_key).items():
+                items.append((nk, nv))
+        else:
+            items.append((new_key, v))
+    return dict(items)
 
 
 def _clean_profile_schema(value: dict) -> dict:
