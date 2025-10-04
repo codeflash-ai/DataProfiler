@@ -12,18 +12,8 @@ import warnings
 from abc import abstractmethod
 from itertools import islice
 from multiprocessing.pool import Pool
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Callable,
-    Dict,
-    Generator,
-    Iterator,
-    Protocol,
-    TypeVar,
-    cast,
-    overload,
-)
+from typing import (TYPE_CHECKING, Any, Callable, Dict, Generator, Iterator,
+                    Protocol, TypeVar, cast, overload)
 
 import numpy as np
 import psutil
@@ -488,19 +478,18 @@ def find_diff_of_lists_and_sets(
         pass
     elif stat1 is None or stat2 is None:
         return [stat1, stat2]
-    elif set(stat1) != set(stat2) or len(stat1) != len(stat2):
-        temp_stat1 = list(copy.deepcopy(stat1))
-        temp_stat2 = list(copy.deepcopy(stat2))
-        shared = []
-        for element in temp_stat1:
-            if element in temp_stat2:
-                shared.append(element)
-                temp_stat2.remove(element)
-        for element in shared:
-            temp_stat1.remove(element)
-
-        return [temp_stat1, shared, temp_stat2]
-
+    else:
+        set1 = set(stat1)
+        set2 = set(stat2)
+        if set1 != set2 or len(stat1) != len(stat2):
+            # Maintain order of first appearance for uniques and shared
+            stat1_list = list(stat1)
+            stat2_list = list(stat2)
+            shared_set = set1 & set2
+            unique1 = [x for x in stat1_list if x not in shared_set]
+            shared = [x for x in stat1_list if x in shared_set]
+            unique2 = [x for x in stat2_list if x not in shared_set]
+            return [unique1, shared, unique2]
     return "unchanged"
 
 
@@ -635,6 +624,7 @@ def find_diff_of_dicts_with_diff_keys(
     diff_1: dict = {}
     diff_shared: dict = {}
     diff_2: dict = {}
+
     for key, value1 in dict1.items():
         if key in dict2:
             value2 = dict2[key]
@@ -651,17 +641,14 @@ def find_diff_of_dicts_with_diff_keys(
         else:
             diff_1[key] = value1
 
-    # Add any keys in dict2 that weren't in dict1
     for key, value in dict2.items():
         if key not in dict1:
             diff_2[key] = value
 
     diff = [diff_1, diff_shared, diff_2]
 
-    # If both dicts have no keys, it is unchanged
     if diff == [{}, {}, {}]:
         return "unchanged"
-
     return diff
 
 
