@@ -1,4 +1,5 @@
 """Contains pre-built processors for data labeling/processing."""
+
 from __future__ import annotations
 
 import abc
@@ -173,9 +174,11 @@ class BaseDataPreprocessor(BaseDataProcessor):
         labels: np.ndarray | None = None,
         label_mapping: dict[str, int] | None = None,
         batch_size: int = 32,
-    ) -> Generator[tuple[np.ndarray, np.ndarray] | np.ndarray, None, None] | tuple[
-        np.ndarray, np.ndarray
-    ] | np.ndarray:
+    ) -> (
+        Generator[tuple[np.ndarray, np.ndarray] | np.ndarray, None, None]
+        | tuple[np.ndarray, np.ndarray]
+        | np.ndarray
+    ):
         """Preprocess data."""
         raise NotImplementedError()
 
@@ -393,14 +396,20 @@ class CharPreprocessor(BaseDataPreprocessor, metaclass=AutoSubRegistrationMeta):
         :type separators: tuple(str)
         :return: index at which the sentence can be split, -1 if no index found.
         """
-        ind_distance = 0
-        separator_dict = dict(zip(separators, [None] * len(separators)))
-        while (start_ind - ind_distance) > min_ind:
-            if (start_ind - ind_distance) >= min_ind and sentence[
-                start_ind - ind_distance
-            ] in separator_dict:
-                return start_ind - ind_distance
-            ind_distance += 1
+
+        # Optimization: use a set for O(1) membership checking and avoid re-creating per invocation
+        separator_set = set(separators)
+
+        # Bounds check for start_ind
+        if start_ind >= len(sentence):
+            start_ind = len(sentence) - 1
+        if start_ind < min_ind:
+            return min_ind
+
+        # Optimization: scan backwards for separator, use direct indexing for speed
+        for ind in range(start_ind, min_ind - 1, -1):
+            if sentence[ind] in separator_set:
+                return ind
         return min_ind
 
     def _process_batch_helper(
@@ -1947,9 +1956,11 @@ class RegexPostProcessor(BaseDataPostprocessor, metaclass=AutoSubRegistrationMet
                 # being changed and is already set
                 aggregation_func = parameters.get(
                     "aggregation_func",
-                    self._parameters.get("aggregation_func")
-                    if hasattr(self, "_parameters")
-                    else None,
+                    (
+                        self._parameters.get("aggregation_func")
+                        if hasattr(self, "_parameters")
+                        else None
+                    ),
                 )
                 if value is None and aggregation_func == "priority":
                     errors.append(
