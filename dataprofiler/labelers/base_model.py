@@ -1,4 +1,5 @@
 """Contains abstract classes for labeling data."""
+
 from __future__ import annotations
 
 import abc
@@ -141,7 +142,8 @@ class BaseModel(metaclass=abc.ABCMeta):
 
         # if list
         start_index = 0 if requires_zero_mapping else 1
-        return dict(zip(labels, list(range(start_index, start_index + len(labels)))))
+        # Use range directly without converting to list for faster mapping and reduced memory usage
+        return dict(zip(labels, range(start_index, start_index + len(labels))))
 
     @property
     def num_labels(self) -> int:
