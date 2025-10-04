@@ -1,4 +1,5 @@
 """Contains class to save and load json data."""
+
 import json
 import re
 import warnings
@@ -71,9 +72,9 @@ class JSONData(SpreadSheetDataMixin, BaseData):
 
         self._data_formats["records"] = self._get_data_as_records
         self._data_formats["json"] = self._get_data_as_json
-        self._data_formats[
-            "flattened_dataframe"
-        ] = self._get_data_as_flattened_dataframe
+        self._data_formats["flattened_dataframe"] = (
+            self._get_data_as_flattened_dataframe
+        )
         self._selected_data_format: str = options.get(
             "data_format", "flattened_dataframe"
         )
@@ -391,28 +392,35 @@ class JSONData(SpreadSheetDataMixin, BaseData):
         if not isinstance(file_path, StringIO):
             file_encoding = data_utils.detect_file_encoding(file_path=file_path)
 
+        json_identifier_re = re.compile(r"(:|\[)")
         with FileOrBufferHandler(file_path, "r", encoding=file_encoding) as data_file:
             try:
                 json.load(data_file)
                 return True
             except (json.JSONDecodeError, UnicodeDecodeError):
                 data_file.seek(0)
-            json_identifier_re = re.compile(r"(:|\[)")
-            for k in range(1000):
-                total_line_count += 1
+
+            # Batch read up to 1000 lines at once (buffered IO)
+            lines = []
+            for _ in range(1000):
+                line = data_file.readline()
+                if not line:
+                    break
+                lines.append(line)
+            total_line_count = len(lines)
+
+            for raw_line in lines:
                 try:
-                    raw_line = data_file.readline()
-                    if not raw_line:
-                        break
-                    if (
-                        json_identifier_re.search(raw_line) is not None
-                    ):  # Ensure can be JSON
+                    if json_identifier_re.search(raw_line) is not None:
                         json.loads(raw_line)  # Check load
                         valid_json_line_count += 1
                 except UnicodeDecodeError:
                     return False
                 except ValueError:
                     continue
+
+        if total_line_count == 0:
+            return False
 
         ratio_of_valid_json_line = float(valid_json_line_count) / total_line_count
 

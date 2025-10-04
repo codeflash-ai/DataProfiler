@@ -9,18 +9,8 @@ from collections import OrderedDict
 from io import BytesIO, StringIO, TextIOWrapper
 from itertools import islice
 from math import floor, log, log1p
-from typing import (
-    Any,
-    Dict,
-    Generator,
-    Iterator,
-    List,
-    Optional,
-    Pattern,
-    Tuple,
-    Union,
-    cast,
-)
+from typing import (Any, Dict, Generator, Iterator, List, Optional, Pattern,
+                    Tuple, Union, cast)
 
 import boto3
 import botocore
@@ -603,13 +593,13 @@ def detect_file_encoding(
     :rtype: str
     """
     detector = UniversalDetector()
-    line_count = 0
+    lines_read = 0
     with FileOrBufferHandler(file_path, "rb") as input_file:
-        chunk = input_file.read(buffer_size)
-        while chunk and line_count < max_lines:
-            detector.feed(chunk)
-            chunk = input_file.read(buffer_size)
-            line_count += 1
+        for line in input_file:
+            detector.feed(line)
+            lines_read += 1
+            if detector.done or lines_read >= max_lines:
+                break
     detector.close()
     encoding = detector.result["encoding"]
 
@@ -618,10 +608,10 @@ def detect_file_encoding(
         encoding = "utf-8"
 
     # Check if encoding can be used to decode without throwing an error
-    def _decode_is_valid(encoding):
+    def _decode_is_valid(encoding, read_bytes: int = 1024 * 1024):
         try:
             with FileOrBufferHandler(file_path, encoding=encoding) as input_file:
-                input_file.read(1024 * 1024)
+                input_file.read(read_bytes)
                 return True
         except Exception:
             return False
@@ -644,11 +634,10 @@ def detect_file_encoding(
                     explain=False,
                 )
                 best_result = results.best()
-            if best_result:
+            if best_result and best_result.encoding and _decode_is_valid(best_result.encoding):
                 encoding = best_result.encoding
-
-            # Try again with full sample
-            if not _decode_is_valid(encoding):
+            else:
+                # Try again with full sample
                 with FileOrBufferHandler(file_path, "rb") as input_file:
                     raw_data = input_file.read(max_lines * buffer_size)
                     results = from_bytes(
@@ -662,7 +651,7 @@ def detect_file_encoding(
                         explain=False,
                     )
                     best_result = results.best()
-                if best_result:
+                if best_result and best_result.encoding and _decode_is_valid(best_result.encoding):
                     encoding = best_result.encoding
 
         except Exception:
