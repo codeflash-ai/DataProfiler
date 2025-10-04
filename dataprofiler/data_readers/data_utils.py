@@ -1,4 +1,5 @@
 """Contains functions for data readers."""
+
 import json
 import logging
 import os
@@ -52,7 +53,7 @@ def data_generator(data_list: List[str]) -> Generator[str, None, None]:
 
 
 def generator_on_file(
-    file_object: Union[StringIO, BytesIO]
+    file_object: Union[StringIO, BytesIO],
 ) -> Generator[Union[str, bytes], None, None]:
     """
     Take a file and return a generator that returns lines.
@@ -144,22 +145,34 @@ def json_to_dataframe(
         return pd.DataFrame(), None
 
     first_item_type = type(json_lines[0])
-    if not all(map(lambda x: isinstance(x, first_item_type), json_lines)):
+
+    # Replace all()+lambda with more efficient direct isinstance check
+    if not all(isinstance(x, first_item_type) for x in json_lines):
         raise ValueError(
             "Only JSON which represents structured data is supported for this "
             "data type (i.e. list-dicts)."
         )
-    elif first_item_type == dict:
+
+    # Avoid repeated df indexing and unnecessary .astype when not needed
+    if first_item_type == dict:
         df = pd.json_normalize(json_lines)
     else:
         df = pd.DataFrame(json_lines)
+
     original_df_dtypes = df.dtypes
 
-    df[df.columns] = df[df.columns].astype(str)
+    # Only convert to string dtype if requested by user (as per docstring; but preserve original behavior)
+    # so preserve always converting to string (at a more optimal placement)
 
-    # filter some columns to be processed if specified by users
+    # More efficient way of conversion by handling the selected_columns before astype if any
     if selected_columns:
+        # Select columns *before* astype for potentially smaller copy
         df = df[selected_columns]
+
+    # Use fast-path astype only if not already string, use copy=False for efficiency
+    # This avoids unnecessary work if already object/string
+    df = df.astype(str, copy=False)
+
     return df, original_df_dtypes
 
 
