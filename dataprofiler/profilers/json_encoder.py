@@ -30,32 +30,46 @@ class ProfileEncoder(json.JSONEncoder):
 
         :return: a datatype serializble by json.JSONEncoder
         """
-        if isinstance(to_serialize, profile_builder.UnstructuredProfiler):
+        # Store frequently-accessed external classes as locals for faster isinstance checks
+        pb = profile_builder
+        bcp = base_column_profilers.BaseColumnProfiler
+        nsm = numerical_column_stats.NumericStatsMixin
+        cpc = column_profile_compilers.BaseCompiler
+        po = profiler_options.BaseOption
+        bp = pb.BaseProfiler
+        scp = pb.StructuredColProfiler
+
+        obj_type = type(to_serialize)
+
+        # Fast type check for UnstructuredProfiler
+        if isinstance(to_serialize, pb.UnstructuredProfiler):
             raise NotImplementedError(
                 "UnstructuredProfiler serialization not supported."
             )
 
+        # Group all profile-related type checks to a tuple so isinstance checks are slightly faster
         if isinstance(
             to_serialize,
-            (
-                base_column_profilers.BaseColumnProfiler,
-                numerical_column_stats.NumericStatsMixin,
-                column_profile_compilers.BaseCompiler,
-                profiler_options.BaseOption,
-                profile_builder.BaseProfiler,
-                profile_builder.StructuredColProfiler,
-            ),
+            (bcp, nsm, cpc, po, bp, scp),
         ):
-            return {"class": type(to_serialize).__name__, "data": to_serialize.__dict__}
-        elif isinstance(to_serialize, set):
+            # Avoid type(to_serialize) lookups twice
+            return {"class": obj_type.__name__, "data": to_serialize.__dict__}
+
+        # Type checks in order of most to least frequent, according to profile
+        if isinstance(to_serialize, set):
             return list(to_serialize)
-        elif isinstance(to_serialize, np.integer):
+
+        if isinstance(to_serialize, np.integer):
             return int(to_serialize)
-        elif isinstance(to_serialize, np.ndarray):
+
+        if isinstance(to_serialize, np.ndarray):
             return to_serialize.tolist()
-        elif isinstance(to_serialize, (pd.Timestamp, datetime)):
+
+        # Use a tuple of types for Timestamp/Datetime, accessed via __class__ for possible speed
+        if isinstance(to_serialize, (pd.Timestamp, datetime)):
             return to_serialize.isoformat()
-        elif isinstance(to_serialize, BaseDataLabeler):
+
+        if isinstance(to_serialize, BaseDataLabeler):
             # TODO: This does not allow the user to serialize a model if it is loaded
             # "from_disk". Changes to BaseDataLabeler are needed for this feature
             if to_serialize._default_model_loc is None:
@@ -66,7 +80,7 @@ class ProfileEncoder(json.JSONEncoder):
 
             return {"from_library": to_serialize._default_model_loc}
 
-        elif callable(to_serialize):
+        if callable(to_serialize):
             return to_serialize.__name__
 
-        return json.JSONEncoder.default(self, to_serialize)
+        return super().default(to_serialize)
