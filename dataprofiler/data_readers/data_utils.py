@@ -1,4 +1,5 @@
 """Contains functions for data readers."""
+
 import json
 import logging
 import os
@@ -52,7 +53,7 @@ def data_generator(data_list: List[str]) -> Generator[str, None, None]:
 
 
 def generator_on_file(
-    file_object: Union[StringIO, BytesIO]
+    file_object: Union[StringIO, BytesIO],
 ) -> Generator[Union[str, bytes], None, None]:
     """
     Take a file and return a generator that returns lines.
@@ -451,13 +452,15 @@ def convert_unicode_col_to_utf8(input_df: pd.DataFrame) -> pd.DataFrame:
     :rtype: pd.DataFrame
     """
     # Convert all the unicode columns to utf-8
-    input_column_types = input_df.apply(
-        lambda x: pd.api.types.infer_dtype(x.values, skipna=True)
-    )
+    column_values = {col: input_df[col].values for col in input_df.columns}
+    input_column_types = {
+        col: pd.api.types.infer_dtype(vals, skipna=True)
+        for col, vals in column_values.items()
+    }
 
-    mixed_and_unicode_cols = input_column_types[
-        input_column_types == "unicode"
-    ].index.union(input_column_types[input_column_types == "mixed"].index)
+    mixed_and_unicode_cols = [
+        col for col, typ in input_column_types.items() if typ in ("unicode", "mixed")
+    ]
 
     for iter_column in mixed_and_unicode_cols:
         # Encode sting to bytes
