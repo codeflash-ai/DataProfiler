@@ -108,17 +108,30 @@ def versions_from_parentdir(parentdir_prefix, root, verbose):
     the project name and a version string. We will also support searching up
     two directory levels for an appropriately named parent directory
     """
-    rootdirs = []
-
-    for i in range(3):
-        dirname = os.path.basename(root)
-        if dirname.startswith(parentdir_prefix):
-            return {"version": dirname[len(parentdir_prefix):],
-                    "full-revisionid": None,
-                    "dirty": False, "error": None, "date": None}
-        else:
-            rootdirs.append(root)
-            root = os.path.dirname(root)  # up a level
+    # We preallocate the rootdirs list for efficiency and avoid repeated list appends.
+    # Also we minimize calls to os.path.basename/os.path.dirname by unrolling the loop.
+    rootdirs = [root]
+    dirname = os.path.basename(root)
+    if dirname.startswith(parentdir_prefix):
+        return {"version": dirname[len(parentdir_prefix):],
+                "full-revisionid": None,
+                "dirty": False, "error": None, "date": None}
+    # Go up one level
+    root = os.path.dirname(root)
+    rootdirs.append(root)
+    dirname = os.path.basename(root)
+    if dirname.startswith(parentdir_prefix):
+        return {"version": dirname[len(parentdir_prefix):],
+                "full-revisionid": None,
+                "dirty": False, "error": None, "date": None}
+    # Go up another level
+    root = os.path.dirname(root)
+    rootdirs.append(root)
+    dirname = os.path.basename(root)
+    if dirname.startswith(parentdir_prefix):
+        return {"version": dirname[len(parentdir_prefix):],
+                "full-revisionid": None,
+                "dirty": False, "error": None, "date": None}
 
     if verbose:
         print("Tried directories %s but none started with prefix %s" %
