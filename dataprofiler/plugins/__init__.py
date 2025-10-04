@@ -35,4 +35,10 @@ def get_plugins(typ):
     :param typ: Broader classification/type of a plugin
     :return: dict
     """
-    return plugins_dict.get(typ)
+    # Direct dictionary access is marginally faster than .get when key presence is guaranteed.
+    # However, to preserve exact behavior (since .get returns None if key absent),
+    # check membership and return None if not found.
+    if typ in plugins_dict:
+        return plugins_dict[typ]
+    else:
+        return None
