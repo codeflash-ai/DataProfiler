@@ -1,4 +1,5 @@
 """Contains functions for data readers."""
+
 import json
 import logging
 import os
@@ -6,35 +7,40 @@ import random
 import re
 import urllib
 from collections import OrderedDict
+from functools import lru_cache
 from io import BytesIO, StringIO, TextIOWrapper
 from itertools import islice
 from math import floor, log, log1p
-from typing import (
-    Any,
-    Dict,
-    Generator,
-    Iterator,
-    List,
-    Optional,
-    Pattern,
-    Tuple,
-    Union,
-    cast,
-)
+from typing import (Any, Dict, Generator, Iterator, List, Optional, Pattern,
+                    Tuple, Union, cast)
 
 import boto3
 import botocore
-import dateutil
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 import requests
 from chardet.universaldetector import UniversalDetector
+from dateutil.parser import parse as _parse
 from typing_extensions import TypeGuard
 
 from .. import dp_logging, rng_utils
 from .._typing import JSONType, Url
 from .filepath_or_buffer import FileOrBufferHandler, is_stream_buffer  # NOQA
+
+_INT_RE = re.compile(r"^[+-]?\d+$")
+
+_FLOAT_RE = re.compile(r"""^[+-]?(?:\d*\.\d+|\d+\.\d*|\d+)([eE][+-]?\d+)?$""", re.ASCII)
+
+_DATE_PARTIAL_RE = re.compile(
+    r"""
+    ^(\d{4}[-/]\d{1,2}[-/]\d{1,2}      # yyyy-mm-dd, yyyy/mm/dd
+    | \d{1,2}[-/]\d{1,2}[-/]\d{2,4}    # mm-dd-yyyy, mm/dd/yyyy, mm-dd-yy, mm/dd/yy
+    | \d{4}[01]\d[0-3]\d                # yyyymmdd
+    | \d{2}:\d{2}(:\d{2})?(\.\d+)?     # HH:MM or HH:MM:SS(.fff)
+    )$""",
+    re.IGNORECASE | re.VERBOSE,
+)
 
 logger = dp_logging.get_child_logger(__name__)
 
@@ -52,7 +58,7 @@ def data_generator(data_list: List[str]) -> Generator[str, None, None]:
 
 
 def generator_on_file(
-    file_object: Union[StringIO, BytesIO]
+    file_object: Union[StringIO, BytesIO],
 ) -> Generator[Union[str, bytes], None, None]:
     """
     Take a file and return a generator that returns lines.
@@ -683,30 +689,29 @@ def detect_cell_type(cell: str) -> str:
     :param cell: String designated for data type detection
     :type cell: str
     """
-    cell_type = "str"
-    if len(cell) == 0:
-        cell_type = "none"
-    else:
+    if not cell:
+        return "none"
 
+    if cell.isupper():
+        return "upstr"
+
+    # Fast integer check
+    if _INT_RE.fullmatch(cell):
+        return "int"
+
+    # Fast float check
+    if _FLOAT_RE.fullmatch(cell):
+        return "float"
+
+    # Lightweight date-like string detection before calling expensive parser
+    if _DATE_PARTIAL_RE.match(cell):
         try:
-            # need to ingore type bc https://github.com/python/mypy/issues/8878
-            if dateutil.parser.parse(cell, fuzzy=False):  # type:ignore
-                cell_type = "date"
+            _parse(cell, fuzzy=False)  # type: ignore
+            return "date"
         except (ValueError, OverflowError, TypeError):
             pass
 
-        try:
-            f_cell = float(cell)
-            cell_type = "float"
-            if f_cell.is_integer():
-                cell_type = "int"
-        except ValueError:
-            pass
-
-        if cell.isupper():
-            cell_type = "upstr"
-
-    return cell_type
+    return "str"
 
 
 def get_delimiter_regex(delimiter: str = ",", quotechar: str = ",") -> Pattern[str]:
@@ -724,19 +729,7 @@ def get_delimiter_regex(delimiter: str = ",", quotechar: str = ",") -> Pattern[s
     if quotechar is None:
         quotechar = '"'
 
-    delimiter_regex = re.escape(str(delimiter))
-    quotechar_escape = re.escape(quotechar)
-    quotechar_regex = "(?="
-    quotechar_regex += "(?:"
-    quotechar_regex += "[^" + quotechar_escape + "]*"
-    quotechar_regex += quotechar_escape
-    quotechar_regex += "[^" + quotechar_escape + "]*"
-    quotechar_regex += quotechar_escape
-    quotechar_regex += ")*"
-    quotechar_regex += "[^" + quotechar_escape + "]*"
-    quotechar_regex += "$)"
-
-    return re.compile(delimiter_regex + quotechar_regex)
+    return _cached_delimiter_regex(delimiter, quotechar)
 
 
 def find_nth_loc(
@@ -927,6 +920,28 @@ def url_to_bytes(url_as_string: Url, options: Dict) -> BytesIO:
 
     stream.seek(0)
     return stream
+
+
+@lru_cache(maxsize=512)
+def _cached_delimiter_regex(delimiter: str, quotechar: str) -> Pattern[str]:
+    delimiter_regex = re.escape(str(delimiter))
+    quotechar_escape = re.escape(quotechar)
+    quotechar_regex = (
+        "(?="
+        "(?:"
+        "[^"
+        + quotechar_escape
+        + "]*"
+        + quotechar_escape
+        + "[^"
+        + quotechar_escape
+        + "]*"
+        + quotechar_escape
+        + ")*"
+        "[^" + quotechar_escape + "]*"
+        "$)"
+    )
+    return re.compile(delimiter_regex + quotechar_regex)
 
 
 class S3Helper:
