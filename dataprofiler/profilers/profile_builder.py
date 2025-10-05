@@ -1657,11 +1657,11 @@ class StructuredProfiler(BaseProfiler):
             options = options.structured_options
         elif not isinstance(options, StructuredOptions):
             raise ValueError(
-                "The profile options must be passed as a " "ProfileOptions object."
+                "The profile options must be passed as a ProfileOptions object."
             )
 
         if isinstance(data, data_readers.text_data.TextData):
-            raise TypeError("Cannot provide TextData object to " "StructuredProfiler")
+            raise TypeError("Cannot provide TextData object to StructuredProfiler")
 
         super().__init__(data, samples_per_update, min_true_samples, options)
 
@@ -1670,6 +1670,7 @@ class StructuredProfiler(BaseProfiler):
         self.row_is_null_count = 0
         self.hashed_row_object: HyperLogLog | dict = dict()
         self._profile: list[StructuredColProfiler] = []  # type: ignore[assignment]
+        # Use defaultdict directly only on construction, cast to normal dict for memory efficiency after load.
         self._col_name_to_idx: dict[str | int, list[int]] = defaultdict(list)
         self.correlation_matrix: np.ndarray = None  # type: ignore[assignment]
         self.chi2_matrix: np.ndarray = None  # type: ignore[assignment]
@@ -1677,13 +1678,19 @@ class StructuredProfiler(BaseProfiler):
         # capitalone/synthetic-data specific metrics
         self._null_replication_metrics: dict = None  # type: ignore[assignment]
 
-        if self.options.row_statistics.unique_count.hashing_method == "hll":
+        # Fast-path: avoid unnecessary HyperLogLog object construction if not needed
+        unique_count_opts = self.options.row_statistics.unique_count
+        if unique_count_opts.hashing_method == "hll":
+            # Save local variables to avoid attribute chain lookup overhead
+            hll_opts = unique_count_opts.hll
             self.hashed_row_object = HyperLogLog(
-                p=options.row_statistics.unique_count.hll.register_count,
-                seed=options.row_statistics.unique_count.hll.seed,
+                p=hll_opts.register_count,
+                seed=hll_opts.seed,
                 sparse=False,
             )
+
         if data is not None:
+            # Only call update_profile once, ensuring minimum logic/attr lookup
             self.update_profile(data)
 
     def _add_error_checks(  # type: ignore[override]
@@ -1919,10 +1926,10 @@ class StructuredProfiler(BaseProfiler):
             col_name = other_profile._profile[i].name
             other_profile_schema[col_name].append(i)
 
-        report["global_stats"][
-            "profile_schema"
-        ] = profiler_utils.find_diff_of_dicts_with_diff_keys(
-            self_profile_schema, other_profile_schema
+        report["global_stats"]["profile_schema"] = (
+            profiler_utils.find_diff_of_dicts_with_diff_keys(
+                self_profile_schema, other_profile_schema
+            )
         )
 
         # Only find the diff of columns if the schemas are exactly the same
@@ -2101,9 +2108,9 @@ class StructuredProfiler(BaseProfiler):
                 self.options.null_replication_metrics.is_enabled
                 and i in self._null_replication_metrics
             ):
-                report["data_stats"][i][
-                    "null_replication_metrics"
-                ] = self._null_replication_metrics[i]
+                report["data_stats"][i]["null_replication_metrics"] = (
+                    self._null_replication_metrics[i]
+                )
 
         return _prepare_report(report, output_format, omit_keys)
 
@@ -2172,14 +2179,14 @@ class StructuredProfiler(BaseProfiler):
 
     def _get_row_has_null_ratio(self) -> float | None:
         """Return whether row has null ratio."""
-        if (
-            not self.options.row_statistics.is_enabled
-            or not self.options.row_statistics.null_count.is_enabled
-        ):
+        opts = self.options.row_statistics
+        if not opts.is_enabled or not opts.null_count.is_enabled:
             return None
 
-        if self._min_col_samples_used:
-            return self.row_has_null_count / self._min_col_samples_used
+        # Favor direct local access for slight optimization in arithmetic
+        min_col_samples = self._min_col_samples_used
+        if min_col_samples:
+            return self.row_has_null_count / min_col_samples
         return 0
 
     def _get_duplicate_row_count(self) -> int | None:
@@ -2610,9 +2617,11 @@ class StructuredProfiler(BaseProfiler):
 
         total_row_sum = np.asarray(
             [
-                get_data_type_profiler(profile).sum
-                if get_data_type(profile) not in [None, "datetime"]
-                else np.nan
+                (
+                    get_data_type_profiler(profile).sum
+                    if get_data_type(profile) not in [None, "datetime"]
+                    else np.nan
+                )
                 for profile in self._profile
             ]
         )
@@ -2704,17 +2713,21 @@ class StructuredProfiler(BaseProfiler):
 
         self_row_sum = np.asarray(
             [
-                get_data_type_profiler(profile).sum
-                if get_data_type(profile)
-                else np.nan
+                (
+                    get_data_type_profiler(profile).sum
+                    if get_data_type(profile)
+                    else np.nan
+                )
                 for profile in self._profile
             ]
         )
         other_row_sum = np.asarray(
             [
-                get_data_type_profiler(profile).sum
-                if get_data_type(profile)
-                else np.nan
+                (
+                    get_data_type_profiler(profile).sum
+                    if get_data_type(profile)
+                    else np.nan
+                )
                 for profile in other._profile
             ]
         )
