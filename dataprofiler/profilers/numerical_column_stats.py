@@ -257,9 +257,9 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
 
         if self.user_set_histogram_bin is None:
             for method in self.histogram_bin_method_names:
-                self.histogram_methods[method][
-                    "suggested_bin_count"
-                ] = histogram_utils._calculate_bins_from_profile(self, method)
+                self.histogram_methods[method]["suggested_bin_count"] = (
+                    histogram_utils._calculate_bins_from_profile(self, method)
+                )
 
         self._get_quantiles()
 
@@ -927,29 +927,68 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
         elif np.isnan(biased_skewness1) or np.isnan(biased_skewness2):
             return np.nan
 
+        # Combine all power calculations to minimize redundant numpy calls.
         delta = mean2 - mean1
         N = match_count1 + match_count2
+
+        # Precompute frequently used terms for better cache locality and less function call overhead
         M2_1 = match_count1 * biased_variance1
         M2_2 = match_count2 * biased_variance2
-        M2 = M2_1 + M2_2 + delta**2 * match_count1 * match_count2 / N
+        match_count1_f = float(match_count1)
+        match_count2_f = float(match_count2)
+        N_f = float(N)
+        delta2 = delta * delta
+        delta3 = delta2 * delta
+        inv_N = 1.0 / N_f
+
+        # Instead of computing delta**2 multiple times, re-use intermediate values
+        # Only do division at the end for M2, to avoid repeated floating-point division operations
+        prod_mc1_mc2 = match_count1_f * match_count2_f
+        M2 = M2_1 + M2_2 + delta2 * prod_mc1_mc2 * inv_N
         if not M2:
             return 0.0
 
-        M3_1 = biased_skewness1 * np.sqrt(M2_1**3) / np.sqrt(match_count1)
-        M3_2 = biased_skewness2 * np.sqrt(M2_2**3) / np.sqrt(match_count2)
+        # M3_1 and M3_2 computations: combine powers and reuse roots
+        # Instead of np.sqrt(M2_1**3), first check for M2_1 == 0
+        # This ensures np.sqrt(0) does not return nan unnecessarily
+        sqrtM2_1 = np.sqrt(M2_1) if M2_1 > 0 else 0.0
+        sqrtM2_2 = np.sqrt(M2_2) if M2_2 > 0 else 0.0
+        sqrt_mc1 = np.sqrt(match_count1_f) if match_count1_f > 0 else 0.0
+        sqrt_mc2 = np.sqrt(match_count2_f) if match_count2_f > 0 else 0.0
+
+        # Avoid unneeded pow by using multiplication (if exponent==3)
+        M2_1_32 = sqrtM2_1 * M2_1  # (M2_1**1.5)
+        M2_2_32 = sqrtM2_2 * M2_2
+
+        # If M2_1_32==0 or sqrt_mc1==0, set corresponding term to 0 instead of np.nan
+        M3_1 = (
+            biased_skewness1 * M2_1_32 / sqrt_mc1
+            if M2_1_32 > 0 and sqrt_mc1 > 0
+            else 0.0
+        )
+        M3_2 = (
+            biased_skewness2 * M2_2_32 / sqrt_mc2
+            if M2_2_32 > 0 and sqrt_mc2 > 0
+            else 0.0
+        )
 
         first_term = M3_1 + M3_2
         second_term = (
-            delta**3
-            * match_count1
-            * match_count2
-            * (match_count1 - match_count2)
-            / N**2
+            delta3 * prod_mc1_mc2 * (match_count1_f - match_count2_f) * (inv_N * inv_N)
         )
-        third_term = 3 * delta * (match_count1 * M2_2 - match_count2 * M2_1) / N
+        # Instead of (N ** 2)
+        third_term = (
+            3.0 * delta * (match_count1_f * M2_2 - match_count2_f * M2_1) * inv_N
+        )
+
         M3 = first_term + second_term + third_term
 
-        biased_skewness: np.float64 = np.sqrt(N) * M3 / np.sqrt(M2**3)
+        # Use already-computed N_f and M2 for single sqrt at the end.
+        sqrtN = np.sqrt(N_f)
+        sqrtM2_cubed = np.sqrt(M2 * M2 * M2)
+        if sqrtM2_cubed == 0.0:
+            return 0.0
+        biased_skewness: np.float64 = sqrtN * M3 / sqrtM2_cubed
         return biased_skewness
 
     @staticmethod
@@ -1040,10 +1079,7 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
             / N**3
         )
         third_term = (
-            6
-            * delta**2
-            * (match_count1**2 * M2_2 + match_count2**2 * M2_1)
-            / N**2
+            6 * delta**2 * (match_count1**2 * M2_2 + match_count2**2 * M2_1) / N**2
         )
         fourth_term = 4 * delta * (match_count1 * M3_2 - match_count2 * M3_1) / N
         M4 = first_term + second_term + third_term + fourth_term
