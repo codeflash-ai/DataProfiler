@@ -1,4 +1,5 @@
 """Contains functions for data readers."""
+
 import json
 import logging
 import os
@@ -9,27 +10,17 @@ from collections import OrderedDict
 from io import BytesIO, StringIO, TextIOWrapper
 from itertools import islice
 from math import floor, log, log1p
-from typing import (
-    Any,
-    Dict,
-    Generator,
-    Iterator,
-    List,
-    Optional,
-    Pattern,
-    Tuple,
-    Union,
-    cast,
-)
+from typing import (Any, Dict, Generator, Iterator, List, Optional, Pattern,
+                    Tuple, Union, cast)
 
 import boto3
 import botocore
-import dateutil
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 import requests
 from chardet.universaldetector import UniversalDetector
+from dateutil.parser import parse as _parse
 from typing_extensions import TypeGuard
 
 from .. import dp_logging, rng_utils
@@ -52,7 +43,7 @@ def data_generator(data_list: List[str]) -> Generator[str, None, None]:
 
 
 def generator_on_file(
-    file_object: Union[StringIO, BytesIO]
+    file_object: Union[StringIO, BytesIO],
 ) -> Generator[Union[str, bytes], None, None]:
     """
     Take a file and return a generator that returns lines.
@@ -683,30 +674,26 @@ def detect_cell_type(cell: str) -> str:
     :param cell: String designated for data type detection
     :type cell: str
     """
-    cell_type = "str"
-    if len(cell) == 0:
-        cell_type = "none"
-    else:
-
-        try:
-            # need to ingore type bc https://github.com/python/mypy/issues/8878
-            if dateutil.parser.parse(cell, fuzzy=False):  # type:ignore
-                cell_type = "date"
-        except (ValueError, OverflowError, TypeError):
-            pass
-
+    if not cell:
+        return "none"
+    if cell.isupper():
+        return "upstr"
+    try:
+        int(cell)
+        return "int"
+    except ValueError:
         try:
             f_cell = float(cell)
-            cell_type = "float"
             if f_cell.is_integer():
-                cell_type = "int"
+                return "int"
+            return "float"
         except ValueError:
-            pass
-
-        if cell.isupper():
-            cell_type = "upstr"
-
-    return cell_type
+            try:
+                if _parse(cell, fuzzy=False):  # type:ignore
+                    return "date"
+            except (ValueError, OverflowError, TypeError):
+                pass
+    return "str"
 
 
 def get_delimiter_regex(delimiter: str = ",", quotechar: str = ",") -> Pattern[str]:
@@ -719,8 +706,7 @@ def get_delimiter_regex(delimiter: str = ",", quotechar: str = ",") -> Pattern[s
     :type delimiter: str
     """
     if delimiter is None:
-        return ""
-
+        return re.compile("")
     if quotechar is None:
         quotechar = '"'
 
