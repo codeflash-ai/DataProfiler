@@ -334,7 +334,7 @@ class BaseInspectorOptions(BooleanOption[BaseInspectorOptionsT]):
         :return: list of errors (if raise_error is false)
         :rtype: list(str)
         """
-        return super()._validate_helper(variable_path)
+        return BooleanOption._validate_helper(self, variable_path)
 
     def is_prop_enabled(self, prop: str) -> bool:
         """
@@ -881,7 +881,7 @@ class DateTimeOptions(BaseInspectorOptions["DateTimeOptions"]):
         :return: list of errors (if raise_error is false)
         :rtype: list(str)
         """
-        return super()._validate_helper(variable_path)
+        return BooleanOption._validate_helper(self, variable_path)
 
 
 class OrderOptions(BaseInspectorOptions["OrderOptions"]):
