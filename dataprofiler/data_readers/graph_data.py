@@ -1,4 +1,5 @@
 """Contains class for identifying, reading, and loading graph data."""
+
 import csv
 from typing import Dict, List, Optional, Union, cast
 
@@ -86,28 +87,18 @@ class GraphData(BaseData):
     ) -> int:
         """Find out if col name contains keyword that could refer to target node col."""
         column_name_symbols = ["_", ".", "-"]
-        has_target = False
-        target_index = -1
-
-        # iterate through columns, keywords, and delimiter name symbols to see
-        # if any permutation is contained in column names
-        for column in range(0, len(column_names)):
-            for keyword in keyword_list:
-                for symbol in column_name_symbols:
-
-                    append_start_word = symbol + keyword
-                    append_end_word = keyword + symbol
-
-                    if (
-                        append_start_word in column_names[column]
-                        or append_end_word in column_names[column]
-                    ):
-                        target_index = column
-                        has_target = True
-                        break
-            if has_target:
-                break
-        return target_index
+        # Precompute all relevant search strings for keywords and symbols
+        search_suffix = []
+        for keyword in keyword_list:
+            for symbol in column_name_symbols:
+                search_suffix.append(symbol + keyword)
+                search_suffix.append(keyword + symbol)
+        # Iterate columns and check for any match using set membership
+        for idx, col_name in enumerate(column_names):
+            for pattern in search_suffix:
+                if pattern in col_name:
+                    return idx
+        return -1
 
     @classmethod
     def csv_column_names(
