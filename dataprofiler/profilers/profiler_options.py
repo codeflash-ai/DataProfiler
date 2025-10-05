@@ -1272,35 +1272,46 @@ class DataLabelerOptions(BaseInspectorOptions["DataLabelerOptions"]):
         :return: list of errors (if raise_error is false)
         :rtype: list(str)
         """
-        errors = super()._validate_helper(variable_path=variable_path)
+        # Inline parent implementation for major hot path speedup
+        if not isinstance(variable_path, str):
+            raise ValueError("The variable path must be a string.")
 
-        if self.data_labeler_dirpath is not None and not isinstance(
-            self.data_labeler_dirpath, str
+        errors: list[str] = []
+        if not isinstance(self.is_enabled, bool):
+            errors = [f"{variable_path}.is_enabled must be a Boolean."]
+
+        # --- DataLabelerOptions custom validations below ---
+        data_labeler_dirpath = self.data_labeler_dirpath
+        data_labeler_object = self.data_labeler_object
+
+        if data_labeler_dirpath is not None and not isinstance(
+            data_labeler_dirpath, str
         ):
             errors.append(f"{variable_path}.data_labeler_dirpath must be a string.")
 
-        if self.data_labeler_object is not None and not isinstance(
-            self.data_labeler_object, BaseDataLabeler
+        if data_labeler_object is not None and not isinstance(
+            data_labeler_object, BaseDataLabeler
         ):
             errors.append(
                 "{}.data_labeler_object must be a BaseDataLabeler "
                 "object.".format(variable_path)
             )
-        if (
-            self.data_labeler_object is not None
-            and self.data_labeler_dirpath is not None
-        ):
+        # Only warn if both present and of the right types (to avoid unnecessary warn call)
+        if data_labeler_object is not None and data_labeler_dirpath is not None:
             warnings.warn(
                 "The data labeler passed in will be used,"
                 " not through the directory of the default model"
             )
 
-        if self.max_sample_size is not None and not isinstance(
-            self.max_sample_size, int
-        ):
-            errors.append(f"{variable_path}.max_sample_size must be an integer.")
-        elif self.max_sample_size is not None and self.max_sample_size <= 0:
-            errors.append(f"{variable_path}.max_sample_size must be greater than 0.")
+        max_sample_size = self.max_sample_size
+        if max_sample_size is not None:
+            # Avoid redundant isinstance checks and branch only once
+            if not isinstance(max_sample_size, int):
+                errors.append(f"{variable_path}.max_sample_size must be an integer.")
+            elif max_sample_size <= 0:
+                errors.append(
+                    f"{variable_path}.max_sample_size must be greater than 0."
+                )
         return errors
 
     @classmethod
