@@ -905,7 +905,13 @@ class OrderOptions(BaseInspectorOptions["OrderOptions"]):
         :return: list of errors (if raise_error is false)
         :rtype: list(str)
         """
-        return super()._validate_helper(variable_path)
+        # Inline parent for performance
+        if not isinstance(variable_path, str):
+            raise ValueError("The variable path must be a string.")
+
+        if not isinstance(self.is_enabled, bool):
+            return [f"{variable_path}.is_enabled must be a Boolean."]
+        return []
 
 
 class CategoricalOptions(BaseInspectorOptions["CategoricalOptions"]):
