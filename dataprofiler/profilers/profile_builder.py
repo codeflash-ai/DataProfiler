@@ -1668,7 +1668,15 @@ class StructuredProfiler(BaseProfiler):
         # Structured specific properties
         self.row_has_null_count = 0
         self.row_is_null_count = 0
-        self.hashed_row_object: HyperLogLog | dict = dict()
+        # Initialize hashed_row_object efficiently by avoiding unnecessary dict creation
+        if self.options.row_statistics.unique_count.hashing_method == "hll":
+            self.hashed_row_object: HyperLogLog | dict = HyperLogLog(
+                p=options.row_statistics.unique_count.hll.register_count,
+                seed=options.row_statistics.unique_count.hll.seed,
+                sparse=False,
+            )
+        else:
+            self.hashed_row_object: HyperLogLog | dict = {}
         self._profile: list[StructuredColProfiler] = []  # type: ignore[assignment]
         self._col_name_to_idx: dict[str | int, list[int]] = defaultdict(list)
         self.correlation_matrix: np.ndarray = None  # type: ignore[assignment]
@@ -1677,12 +1685,6 @@ class StructuredProfiler(BaseProfiler):
         # capitalone/synthetic-data specific metrics
         self._null_replication_metrics: dict = None  # type: ignore[assignment]
 
-        if self.options.row_statistics.unique_count.hashing_method == "hll":
-            self.hashed_row_object = HyperLogLog(
-                p=options.row_statistics.unique_count.hll.register_count,
-                seed=options.row_statistics.unique_count.hll.seed,
-                sparse=False,
-            )
         if data is not None:
             self.update_profile(data)
 
@@ -1919,10 +1921,10 @@ class StructuredProfiler(BaseProfiler):
             col_name = other_profile._profile[i].name
             other_profile_schema[col_name].append(i)
 
-        report["global_stats"][
-            "profile_schema"
-        ] = profiler_utils.find_diff_of_dicts_with_diff_keys(
-            self_profile_schema, other_profile_schema
+        report["global_stats"]["profile_schema"] = (
+            profiler_utils.find_diff_of_dicts_with_diff_keys(
+                self_profile_schema, other_profile_schema
+            )
         )
 
         # Only find the diff of columns if the schemas are exactly the same
@@ -2101,9 +2103,9 @@ class StructuredProfiler(BaseProfiler):
                 self.options.null_replication_metrics.is_enabled
                 and i in self._null_replication_metrics
             ):
-                report["data_stats"][i][
-                    "null_replication_metrics"
-                ] = self._null_replication_metrics[i]
+                report["data_stats"][i]["null_replication_metrics"] = (
+                    self._null_replication_metrics[i]
+                )
 
         return _prepare_report(report, output_format, omit_keys)
 
@@ -2160,14 +2162,15 @@ class StructuredProfiler(BaseProfiler):
 
     def _get_row_is_null_ratio(self) -> float | None:
         """Return whether row is null ratio."""
-        if (
-            not self.options.row_statistics.is_enabled
-            or not self.options.row_statistics.null_count.is_enabled
-        ):
+        # Store references in local variables to reduce attribute lookups
+        options = self.options
+        row_statistics = options.row_statistics
+        if not row_statistics.is_enabled or not row_statistics.null_count.is_enabled:
             return None
 
-        if self._min_col_samples_used:
-            return self.row_is_null_count / self._min_col_samples_used
+        min_col_samples = self._min_col_samples_used
+        if min_col_samples:
+            return self.row_is_null_count / min_col_samples
         return 0
 
     def _get_row_has_null_ratio(self) -> float | None:
@@ -2610,9 +2613,11 @@ class StructuredProfiler(BaseProfiler):
 
         total_row_sum = np.asarray(
             [
-                get_data_type_profiler(profile).sum
-                if get_data_type(profile) not in [None, "datetime"]
-                else np.nan
+                (
+                    get_data_type_profiler(profile).sum
+                    if get_data_type(profile) not in [None, "datetime"]
+                    else np.nan
+                )
                 for profile in self._profile
             ]
         )
@@ -2704,17 +2709,21 @@ class StructuredProfiler(BaseProfiler):
 
         self_row_sum = np.asarray(
             [
-                get_data_type_profiler(profile).sum
-                if get_data_type(profile)
-                else np.nan
+                (
+                    get_data_type_profiler(profile).sum
+                    if get_data_type(profile)
+                    else np.nan
+                )
                 for profile in self._profile
             ]
         )
         other_row_sum = np.asarray(
             [
-                get_data_type_profiler(profile).sum
-                if get_data_type(profile)
-                else np.nan
+                (
+                    get_data_type_profiler(profile).sum
+                    if get_data_type(profile)
+                    else np.nan
+                )
                 for profile in other._profile
             ]
         )
