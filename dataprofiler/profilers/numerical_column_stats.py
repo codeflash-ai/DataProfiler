@@ -257,9 +257,9 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
 
         if self.user_set_histogram_bin is None:
             for method in self.histogram_bin_method_names:
-                self.histogram_methods[method][
-                    "suggested_bin_count"
-                ] = histogram_utils._calculate_bins_from_profile(self, method)
+                self.histogram_methods[method]["suggested_bin_count"] = (
+                    histogram_utils._calculate_bins_from_profile(self, method)
+                )
 
         self._get_quantiles()
 
@@ -371,24 +371,63 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
 
         :return:
         """
-        profile = dict(
-            min=self.np_type_to_type(self.min),
-            max=self.np_type_to_type(self.max),
-            mode=self.np_type_to_type(self.mode),
-            median=self.np_type_to_type(self.median),
-            sum=self.np_type_to_type(self.sum),
-            mean=self.np_type_to_type(self.mean),
-            variance=self.np_type_to_type(self.variance),
-            stddev=self.np_type_to_type(self.stddev),
-            skewness=self.np_type_to_type(self.skewness),
-            kurtosis=self.np_type_to_type(self.kurtosis),
-            histogram=self._get_best_histogram_for_profile(),
-            quantiles=self.quantiles,
-            median_abs_deviation=self.np_type_to_type(self.median_abs_deviation),
-            num_zeros=self.np_type_to_type(self.num_zeros),
-            num_negatives=self.np_type_to_type(self.num_negatives),
-            times=self.times,
-        )
+        # Caches for numpy type conversions
+        np_integer = np.integer
+        np_floating = np.floating
+
+        def np_type_to_type(val: Any) -> Any:
+            """
+            Convert numpy variables to base python type variables.
+
+            :param val: value to check & change
+            :type val: numpy type or base type
+            :return val: base python type
+            :rtype val: int or float
+            """
+            # This inner variant reduces global lookups by using local fastpath
+            if isinstance(val, np_integer):
+                return int(val)
+            if isinstance(val, np_floating):
+                return float(val)
+            return val
+
+        # Preload all properties and reuse lookups to reduce attribute access overhead
+        min_v = self.min
+        max_v = self.max
+        mode_v = self.mode
+        median_v = self.median
+        sum_v = self.sum
+        mean_v = self.mean
+        variance_v = self.variance
+        stddev_v = self.stddev
+        skewness_v = self.skewness
+        kurtosis_v = self.kurtosis
+        median_abs_deviation_v = self.median_abs_deviation
+        num_zeros_v = self.num_zeros
+        num_negatives_v = self.num_negatives
+        histogram_v = self._get_best_histogram_for_profile()
+        quantiles_v = self.quantiles
+        times_v = self.times
+
+        # Inline np_type_to_type calls so we're not calling attribute lookup repeatedly
+        profile = {
+            "min": np_type_to_type(min_v),
+            "max": np_type_to_type(max_v),
+            "mode": np_type_to_type(mode_v),
+            "median": np_type_to_type(median_v),
+            "sum": np_type_to_type(sum_v),
+            "mean": np_type_to_type(mean_v),
+            "variance": np_type_to_type(variance_v),
+            "stddev": np_type_to_type(stddev_v),
+            "skewness": np_type_to_type(skewness_v),
+            "kurtosis": np_type_to_type(kurtosis_v),
+            "histogram": histogram_v,
+            "quantiles": quantiles_v,
+            "median_abs_deviation": np_type_to_type(median_abs_deviation_v),
+            "num_zeros": np_type_to_type(num_zeros_v),
+            "num_negatives": np_type_to_type(num_negatives_v),
+            "times": times_v,
+        }
 
         return profile
 
@@ -1040,10 +1079,7 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
             / N**3
         )
         third_term = (
-            6
-            * delta**2
-            * (match_count1**2 * M2_2 + match_count2**2 * M2_1)
-            / N**2
+            6 * delta**2 * (match_count1**2 * M2_2 + match_count2**2 * M2_1) / N**2
         )
         fourth_term = 4 * delta * (match_count1 * M3_2 - match_count2 * M3_1) / N
         M4 = first_term + second_term + third_term + fourth_term
@@ -1541,10 +1577,11 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
             best_hist_loss = None
             for method in self.histogram_methods:
                 histogram, hist_loss = self._histogram_for_profile(method)
-                self.histogram_methods[method]["histogram"] = histogram
-                self.histogram_methods[method]["current_loss"] = hist_loss
-                self.histogram_methods[method]["total_loss"] += hist_loss
-                if not best_hist_loss or hist_loss < best_hist_loss:
+                method_entry = self.histogram_methods[method]
+                method_entry["histogram"] = histogram
+                method_entry["current_loss"] = hist_loss
+                method_entry["total_loss"] += hist_loss
+                if best_hist_loss is None or hist_loss < best_hist_loss:
                     self.histogram_selection = method
                     best_hist_loss = hist_loss
 
@@ -2053,8 +2090,12 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
         :return val: base python type
         :rtype val: int or float
         """
-        if isinstance(val, np.integer):
+        # Cache locally for faster isinstance checks
+        np_integer = np.integer
+        np_floating = np.floating
+
+        if isinstance(val, np_integer):
             return int(val)
-        if isinstance(val, np.floating):
+        if isinstance(val, np_floating):
             return float(val)
         return val
