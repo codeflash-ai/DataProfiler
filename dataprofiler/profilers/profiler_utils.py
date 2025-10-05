@@ -1,4 +1,5 @@
 """Contains functions for profilers."""
+
 from __future__ import annotations
 
 import collections
@@ -198,7 +199,7 @@ def auto_multiprocess_toggle(
     """
     # If the number of rows or columns exceed their respective threshold,
     # we want to turn on multiprocessing
-    if data.shape[0] > num_rows_threshold or data.shape[1] > num_cols_threshold:
+    if len(data.index) > num_rows_threshold or len(data.columns) > num_cols_threshold:
         return True
     # Otherwise, we do not turn on multiprocessing
     else:
@@ -417,13 +418,11 @@ T = TypeVar("T", bound=Subtractable)
 def find_diff_of_numbers(
     stat1: int | float | np.float64 | np.int64 | None,
     stat2: int | float | np.float64 | np.int64 | None,
-) -> Any:
-    ...
+) -> Any: ...
 
 
 @overload
-def find_diff_of_numbers(stat1: T | None, stat2: T | None) -> Any:
-    ...
+def find_diff_of_numbers(stat1: T | None, stat2: T | None) -> Any: ...
 
 
 def find_diff_of_numbers(stat1, stat2):
