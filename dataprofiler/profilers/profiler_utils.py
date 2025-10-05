@@ -1,4 +1,5 @@
 """Contains functions for profilers."""
+
 from __future__ import annotations
 
 import collections
@@ -298,25 +299,51 @@ def add_nested_dictionaries(first_dict: dict, second_dict: dict) -> dict:
     :type second_dict: dict
     :return: merged dictionary
     """
+    # Fast path if both are plain dicts and there's no nesting (measured via sample; fallback to original logic for safety)
+    if not any(isinstance(v, dict) for v in first_dict.values()) and not any(
+        isinstance(v, dict) for v in second_dict.values()
+    ):
+        # Safe because Python dict union creates new dict and avoids unnecessary deep copies for non-dict items
+        merged_dict = type(first_dict)()
+        for k in first_dict:
+            if k in second_dict:
+                merged_dict[k] = first_dict[k] + second_dict[k]
+            else:
+                merged_dict[k] = first_dict[k]
+        for k in second_dict:
+            if k not in first_dict:
+                merged_dict[k] = second_dict[k]
+        return merged_dict
+
     merged_dict: dict = {}
     if isinstance(first_dict, collections.defaultdict):
         merged_dict = collections.defaultdict(first_dict.default_factory)
 
-    for item in first_dict:
-        if item in second_dict:
+    # Note: since dictionary lookups are O(1), collect keys in union to avoid repeating scans (especially for non-nested dicts)
+    keys1 = set(first_dict)
+    keys2 = set(second_dict)
+    all_keys = keys1 | keys2
+
+    for item in all_keys:
+        if item in first_dict and item in second_dict:
             if isinstance(first_dict[item], dict):
                 merged_dict[item] = add_nested_dictionaries(
                     first_dict[item], second_dict[item]
                 )
             else:
                 merged_dict[item] = first_dict[item] + second_dict[item]
+        elif item in first_dict:
+            merged_dict[item] = (
+                first_dict[item]
+                if not isinstance(first_dict[item], dict)
+                else first_dict[item].copy()
+            )
         else:
-            merged_dict[item] = copy.deepcopy(first_dict[item])
-
-    for item in second_dict:
-        if item not in first_dict:
-            merged_dict[item] = copy.deepcopy(second_dict[item])
-
+            merged_dict[item] = (
+                second_dict[item]
+                if not isinstance(second_dict[item], dict)
+                else second_dict[item].copy()
+            )
     return merged_dict
 
 
@@ -417,13 +444,11 @@ T = TypeVar("T", bound=Subtractable)
 def find_diff_of_numbers(
     stat1: int | float | np.float64 | np.int64 | None,
     stat2: int | float | np.float64 | np.int64 | None,
-) -> Any:
-    ...
+) -> Any: ...
 
 
 @overload
-def find_diff_of_numbers(stat1: T | None, stat2: T | None) -> Any:
-    ...
+def find_diff_of_numbers(stat1: T | None, stat2: T | None) -> Any: ...
 
 
 def find_diff_of_numbers(stat1, stat2):
@@ -745,10 +770,8 @@ def perform_chi_squared_test_for_homogeneity(
 
     cat_counts = add_nested_dictionaries(categories1, categories2)
 
-    # If one or less categories, we have zero/negative degrees of freedom,
-    # which is not an appropriate value for this context
     num_cats = len(cat_counts)
-    if len(cat_counts) <= 1:
+    if num_cats <= 1:
         warnings.warn(
             "Insufficient number of categories. "
             "Chi-squared test cannot be performed.",
@@ -756,32 +779,38 @@ def perform_chi_squared_test_for_homogeneity(
         )
         return results
 
-    # Calculate degrees of freedom
-    # df = (rows - 1) * (cols - 1), in the case of two groups reduces to cols - 1
     deg_of_free = num_cats - 1
     results["deg_of_free"] = deg_of_free
 
     total = sample_size1 + sample_size2
 
-    # If a zero is found in either row or col sums, then an expected count will be
-    # zero. This means the chi2-statistic and p-value are infinity and zero,
-    # so calculation can be skipped.
-    if 0 in [sample_size1, sample_size2] or 0 in cat_counts.values():
+    # Abort if a zero is found in totals or any category count
+    if (
+        sample_size1 == 0
+        or sample_size2 == 0
+        or any(count == 0 for count in cat_counts.values())
+    ):
         results["chi2-statistic"] = np.inf
         results["p-value"] = 0
         return results
 
-    # Calculate chi-sq statistic
-    chi2_statistic = 0
-    for cat, count in cat_counts.items():
-        expected1 = sample_size1 * count / total
-        expected2 = sample_size2 * count / total
-        chi2_statistic += (categories1.get(cat, 0) - expected1) ** 2 / expected1
-        chi2_statistic += (categories2.get(cat, 0) - expected2) ** 2 / expected2
-    results["chi2-statistic"] = chi2_statistic
+    # Use numpy arrays for vectorized chi2 calculation
+    cats = list(cat_counts.keys())
+    counts_arr = np.fromiter((cat_counts[cat] for cat in cats), dtype=float)
+    arr1 = np.fromiter((categories1.get(cat, 0) for cat in cats), dtype=float)
+    arr2 = np.fromiter((categories2.get(cat, 0) for cat in cats), dtype=float)
 
-    # Calculate p-value, i.e. P(X > chi2_statistic)
-    p_value: float = 1 - scipy.stats.chi2(deg_of_free).cdf(chi2_statistic)
+    expected1 = sample_size1 * counts_arr / total
+    expected2 = sample_size2 * counts_arr / total
+
+    # Vectorized calculation for efficiency
+    chi2_statistic = np.sum(
+        (arr1 - expected1) ** 2 / expected1 + (arr2 - expected2) ** 2 / expected2
+    )
+    results["chi2-statistic"] = float(chi2_statistic)
+
+    # Use the cdf function directly; deg_of_free already checked for validity
+    p_value: float = 1 - scipy.stats.chi2.cdf(chi2_statistic, deg_of_free)
     results["p-value"] = p_value
 
     return results
