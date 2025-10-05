@@ -1,4 +1,5 @@
 """Contains functions for profilers."""
+
 from __future__ import annotations
 
 import collections
@@ -417,13 +418,11 @@ T = TypeVar("T", bound=Subtractable)
 def find_diff_of_numbers(
     stat1: int | float | np.float64 | np.int64 | None,
     stat2: int | float | np.float64 | np.int64 | None,
-) -> Any:
-    ...
+) -> Any: ...
 
 
 @overload
-def find_diff_of_numbers(stat1: T | None, stat2: T | None) -> Any:
-    ...
+def find_diff_of_numbers(stat1: T | None, stat2: T | None) -> Any: ...
 
 
 def find_diff_of_numbers(stat1, stat2):
@@ -599,8 +598,8 @@ def find_diff_of_matrices(
     :rtype: list(list(float))
     """
     if matrix1 is not None and matrix2 is not None:
-        mat1 = np.array(matrix1, dtype=np.float64)
-        mat2 = np.array(matrix2, dtype=np.float64)
+        mat1 = np.asarray(matrix1, dtype=np.float64)
+        mat2 = np.asarray(matrix2, dtype=np.float64)
 
         if mat1.shape == mat2.shape:
             diff: np.ndarray = mat1 - mat2
