@@ -968,66 +968,69 @@ class CategoricalOptions(BaseInspectorOptions["CategoricalOptions"]):
         :rtype: list(str)
         """
         errors = super()._validate_helper(variable_path)
-        if self.top_k_categories is not None and (
-            not isinstance(self.top_k_categories, int) or self.top_k_categories < 1
-        ):
+
+        # Inline all simple literal values, alias attrs to local for faster access (CPython optimization)
+        top_k_categories = self.top_k_categories
+        max_sample = self.max_sample_size_to_check_stop_condition
+        unique_value_ratio = self.stop_condition_unique_value_ratio
+        cms_conf = self.cms_confidence
+        cms_relerr = self.cms_relative_error
+        cms = self.cms
+        cms_max_hh = self.cms_max_num_heavy_hitters
+
+        # Evaluate the checks in order. By grouping all checks by variable,
+        # we reduce attribute lookups and unnecessary branching.
+        if top_k_categories is not None:
+            if not isinstance(top_k_categories, int) or top_k_categories < 1:
+                errors.append(
+                    f"{variable_path}.top_k_categories must be either None"
+                    " or a positive integer"
+                )
+
+        if max_sample is not None:
+            if not isinstance(max_sample, int) or max_sample < 0:
+                errors.append(
+                    f"{variable_path}.max_sample_size_to_check_stop_condition must be either None"
+                    " or a non-negative integer"
+                )
+
+        if unique_value_ratio is not None:
+            if (
+                not isinstance(unique_value_ratio, float)
+                or unique_value_ratio < 0
+                or unique_value_ratio > 1.0
+            ):
+                errors.append(
+                    f"{variable_path}.stop_condition_unique_value_ratio must be either None"
+                    " or a float between 0 and 1"
+                )
+
+        # XOR-check for paired configuration
+        if (max_sample is None) != (unique_value_ratio is None):
             errors.append(
-                "{}.top_k_categories must be either None"
-                " or a positive integer".format(variable_path)
+                f"Both, {variable_path}.max_sample_size_to_check_stop_condition and "
+                f"{variable_path}.stop_condition_unique_value_ratio, options either need to be "
+                "set or not set."
             )
 
-        if self.max_sample_size_to_check_stop_condition is not None and (
-            not isinstance(self.max_sample_size_to_check_stop_condition, int)
-            or self.max_sample_size_to_check_stop_condition < 0
-        ):
-            errors.append(
-                "{}.max_sample_size_to_check_stop_condition must be either None"
-                " or a non-negative integer".format(variable_path)
-            )
+        if cms_conf is not None:
+            if not isinstance(cms_conf, float) or cms_conf < 0 or cms_conf > 1.0:
+                errors.append(
+                    f"{variable_path}.cms_confidence must be either None"
+                    " or a float between 0 and 1"
+                )
 
-        if self.stop_condition_unique_value_ratio is not None and (
-            not isinstance(self.stop_condition_unique_value_ratio, float)
-            or self.stop_condition_unique_value_ratio < 0
-            or self.stop_condition_unique_value_ratio > 1.0
-        ):
-            errors.append(
-                "{}.stop_condition_unique_value_ratio must be either None"
-                " or a float between 0 and 1".format(variable_path)
-            )
+        if cms_relerr is not None:
+            if not isinstance(cms_relerr, float) or cms_relerr < 0 or cms_relerr > 1.0:
+                errors.append(
+                    f"{variable_path}.cms_relative_error must be either None"
+                    " or a float between 0 and 1"
+                )
 
-        if (self.max_sample_size_to_check_stop_condition is None) ^ (
-            self.stop_condition_unique_value_ratio is None
-        ):
+        if cms and not isinstance(cms_max_hh, int):
             errors.append(
-                "Both, {}.max_sample_size_to_check_stop_condition and "
-                "{}.stop_condition_unique_value_ratio, options either need to be "
-                "set or not set.".format(variable_path, variable_path)
-            )
-
-        if self.cms_confidence is not None and (
-            not isinstance(self.cms_confidence, float)
-            or self.cms_confidence < 0
-            or self.cms_confidence > 1.0
-        ):
-            errors.append(
-                "{}.cms_confidence must be either None"
-                " or a float between 0 and 1".format(variable_path)
-            )
-
-        if self.cms_relative_error is not None and (
-            not isinstance(self.cms_relative_error, float)
-            or self.cms_relative_error < 0
-            or self.cms_relative_error > 1.0
-        ):
-            errors.append(
-                "{}.cms_relative_error must be either None"
-                " or a float between 0 and 1".format(variable_path)
-            )
-
-        if self.cms and not isinstance(self.cms_max_num_heavy_hitters, int):
-            errors.append(
-                "{}.if using count min sketch, you must pass an"
-                "integer value for cms_max_num_heavy_hitters".format(variable_path)
+                f"{variable_path}.if using count min sketch, you must pass an"
+                "integer value for cms_max_num_heavy_hitters"
             )
 
         return errors
