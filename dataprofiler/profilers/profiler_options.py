@@ -205,10 +205,11 @@ class BooleanOption(BaseOption[BooleanOptionT]):
         if not isinstance(variable_path, str):
             raise ValueError("The variable path must be a string.")
 
-        errors: list[str] = []
+        # Direct set and return if type check fails to avoid unnecessary variable assignment
         if not isinstance(self.is_enabled, bool):
-            errors = [f"{variable_path}.is_enabled must be a Boolean."]
-        return errors
+            return [f"{variable_path}.is_enabled must be a Boolean."]
+
+        return []
 
 
 class HistogramAndQuantilesOption(BooleanOption["HistogramAndQuantilesOption"]):
@@ -301,12 +302,12 @@ class ModeOption(BooleanOption["ModeOption"]):
         """
         errors = super()._validate_helper(variable_path=variable_path)
 
-        if self.top_k_modes is not None and (
-            not isinstance(self.top_k_modes, int) or self.top_k_modes < 1
+        top_k_modes = self.top_k_modes  # local var for slightly improved speed
+        if top_k_modes is not None and (
+            not isinstance(top_k_modes, int) or top_k_modes < 1
         ):
             errors.append(
-                "{}.top_k_modes must be either None"
-                " or a positive integer".format(variable_path)
+                f"{variable_path}.top_k_modes must be either None or a positive integer"
             )
         return errors
 
