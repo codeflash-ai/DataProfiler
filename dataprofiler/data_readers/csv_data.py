@@ -1,4 +1,5 @@
 """Contains class that saves and loads spreadsheet data."""
+
 import csv
 import random
 import re
@@ -187,7 +188,7 @@ class CSVData(SpreadSheetDataMixin, BaseData):
         preferred: List[str] = [",", "\t"],
         omitted: List[str] = ['"', "'"],
     ) -> Tuple[Optional[str], Optional[str]]:
-        r"""
+        """
         Automatically check for what delimiter exists in a text document.
 
         :param data_as_str: Single string containing rows (lines separated by "\n")
@@ -205,30 +206,26 @@ class CSVData(SpreadSheetDataMixin, BaseData):
         """
         # Detect vocabulary (and count)
         vocab = Counter(data_as_str)
+        vocab_pop = vocab.pop
         if "\n" in vocab:
-            vocab.pop("\n")
+            vocab_pop("\n")
         omitted_list: List[str] = omitted
         if quotechar is not None:
             omitted_list = omitted + [quotechar]
         for char in omitted_list:
             if char in vocab:
-                vocab.pop(char)
+                vocab_pop(char)
 
         # Sort vocabulary by count
-        ordered_vocab = []
         sorted_keys = sorted(vocab, key=vocab.__getitem__, reverse=True)
-        for c in sorted_keys:
-            if c not in preferred:
-                ordered_vocab.append(c)
+        ordered_vocab = [c for c in sorted_keys if c not in preferred]
 
         # Attempt to identify the quote character
         if not quotechar:
             sniffer = csv.Sniffer()
             sniffer.preferred = preferred
             try:
-                # NOTE: Pull the first element, the quote character
-                # ignoring type b/c error in getting this class's func
-                quotechar = sniffer._guess_quote_and_delimiter(  # type: ignore
+                quotechar = sniffer._guess_quote_and_delimiter(
                     data_as_str, ordered_vocab[:20]
                 )[0]
             except csv.Error:
@@ -236,10 +233,17 @@ class CSVData(SpreadSheetDataMixin, BaseData):
             if not quotechar or len(quotechar) == 0:
                 quotechar = '"'
 
-        # Evaluate vocab, reviewing rows and columns
         delimiter = None
         validated_proposed_delimiters = {}
-        for proposed_delim in preferred + ordered_vocab[:20]:
+        preferred_len = len(preferred)
+        ordered_vocab_sub = ordered_vocab[:20]
+
+        # Precompute .split for data_as_str, we're going to use these repeatedly
+        base_rows = data_as_str.split("\n")
+        len_base_rows = len(base_rows)
+
+        # Main loop for delimiter candidates
+        for proposed_delim in preferred + ordered_vocab_sub:
 
             col_types = {}
             max_col_count = 0
@@ -251,55 +255,55 @@ class CSVData(SpreadSheetDataMixin, BaseData):
 
             proposed_delim_type = data_utils.detect_cell_type(proposed_delim)
 
-            # If large dataset, select first 25 rows then random sampling
-            proposed_dataset = data_as_str.split("\n")
-            if len(proposed_dataset) > 25:
-                sample_count = min(int(0.1 * (len(proposed_dataset) - 25)), 1000)
-                proposed_dataset = proposed_dataset[:25] + random.choices(
-                    proposed_dataset[:25], k=sample_count
+            # Use only the sample strategy if needed, but cache the sample
+            if len_base_rows > 25:
+                sample_count = min(int(0.1 * (len_base_rows - 25)), 1000)
+                sample_rows = base_rows[:25] + random.choices(
+                    base_rows[:25], k=sample_count
                 )
+                proposed_dataset = sample_rows
+            else:
+                proposed_dataset = base_rows
 
-            # Reverse to start at bottom where likely the most columns
-            # Fewer columns are okay, as long as earlier in file
-            for row_idx in range(len(proposed_dataset) - 1, -1, -1):
-
+            # Reverse scan to start at bottom where likely the most columns
+            n_rows = len(proposed_dataset)
+            delimiter_regex = data_utils.get_delimiter_regex(proposed_delim, quotechar)
+            for row_idx in range(n_rows - 1, -1, -1):
                 row = proposed_dataset[row_idx]
 
                 # Skip - extra split from "\n" with no data
-                if len(row) <= 1 and row_idx == len(proposed_dataset) - 1:
+                if len(row) <= 1 and row_idx == n_rows - 1:
                     continue
 
-                delimiter_regex = data_utils.get_delimiter_regex(
-                    proposed_delim, quotechar
-                )
+                # delimiter_regex: now cached in data_utils
                 proposed_cells = re.split(delimiter_regex, row)
 
+                len_cells = len(proposed_cells)
                 # Keep track of largest number of col's
                 if prior_col_count is None:
-                    prior_col_count = len(proposed_cells)
+                    prior_col_count = len_cells
                 if max_col_count == 0:
-                    max_col_count = len(proposed_cells)
+                    max_col_count = len_cells
 
                 # Ensure rows have same number of cols, if more than one col
-                if len(proposed_cells) > prior_col_count:
+                if len_cells > prior_col_count:
                     incorrect_delimiter_flag = True
                     break
 
                 # Ensure there's more than one cell, if there's a delim
-                if len(proposed_cells) > 1:
+                if len_cells > 1:
                     valid_delim_flag = True
 
-                prior_col_count = len(proposed_cells)
+                prior_col_count = len_cells
 
                 prior_cell_type = None  # Checks for int/alpha values and delims
-                for col_id in range(len(proposed_cells)):
+                for col_id in range(len_cells):
 
                     proposed_cell = proposed_cells[col_id]
                     cell_type = data_utils.detect_cell_type(proposed_cell)
                     col_types[col_id] = cell_type
 
-                    # Handle if alpha character are seperator
-                    # NOTE: delimiter needs two ajoining cells to flag
+                    # Handle if alpha character are separator
                     if cell_type in ["str", "none"] and prior_cell_type in [
                         "str",
                         "none",
@@ -307,36 +311,37 @@ class CSVData(SpreadSheetDataMixin, BaseData):
                         if proposed_delim.isalpha():
                             cell_type_safe_flag = False
                             break
-                        if proposed_delim == " " and 2 >= len(proposed_cells):
+                        if proposed_delim == " " and 2 >= len_cells:
                             cell_type_safe_flag = False
                             break
 
-                    # Handle if integer characters are seperators
-                    # NOTE: delimiter need one adjoining cell to flag
+                    # Handle if integer characters are separators
                     if proposed_delim_type == "int" and cell_type == "int":
                         cell_type_safe_flag = False
                         break
 
                     prior_cell_type = cell_type
 
+                if not cell_type_safe_flag:
+                    break
+
             if (
                 not incorrect_delimiter_flag
                 and cell_type_safe_flag
                 and valid_delim_flag
             ):
-                validated_proposed_delimiters[proposed_delim] = max_col_count
-                if (
-                    max_col_count
-                    and max_col_count > validated_proposed_delimiters[proposed_delim]
-                ):
+                # Always keep the highest col count for each delimiter
+                prev_col = validated_proposed_delimiters.get(proposed_delim, 0)
+                if max_col_count > prev_col:
+                    validated_proposed_delimiters[proposed_delim] = max_col_count
                     delimiter = proposed_delim
 
         # Use preferred delimiters with highest count, if possible
         largest_delim_count = 0
-        for proposed_delim in validated_proposed_delimiters.keys():
-            weighted_delim_count = validated_proposed_delimiters[proposed_delim]
+        for proposed_delim, col_count in validated_proposed_delimiters.items():
+            weighted_delim_count = col_count
             if proposed_delim in preferred:
-                weighted_delim_count = 5 * validated_proposed_delimiters[proposed_delim]
+                weighted_delim_count = 5 * col_count
             if weighted_delim_count > largest_delim_count:
                 delimiter = proposed_delim
                 largest_delim_count = weighted_delim_count
