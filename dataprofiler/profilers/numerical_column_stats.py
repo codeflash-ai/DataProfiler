@@ -257,9 +257,9 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
 
         if self.user_set_histogram_bin is None:
             for method in self.histogram_bin_method_names:
-                self.histogram_methods[method][
-                    "suggested_bin_count"
-                ] = histogram_utils._calculate_bins_from_profile(self, method)
+                self.histogram_methods[method]["suggested_bin_count"] = (
+                    histogram_utils._calculate_bins_from_profile(self, method)
+                )
 
         self._get_quantiles()
 
@@ -1040,10 +1040,7 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
             / N**3
         )
         third_term = (
-            6
-            * delta**2
-            * (match_count1**2 * M2_2 + match_count2**2 * M2_1)
-            / N**2
+            6 * delta**2 * (match_count1**2 * M2_2 + match_count2**2 * M2_1) / N**2
         )
         fourth_term = 4 * delta * (match_count1 * M3_2 - match_count2 * M3_1) / N
         M4 = first_term + second_term + third_term + fourth_term
@@ -1537,18 +1534,35 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
         :return: histogram bin edges and bin counts
         :rtype: dict
         """
-        if self.histogram_selection is None:
-            best_hist_loss = None
-            for method in self.histogram_methods:
-                histogram, hist_loss = self._histogram_for_profile(method)
-                self.histogram_methods[method]["histogram"] = histogram
-                self.histogram_methods[method]["current_loss"] = hist_loss
-                self.histogram_methods[method]["total_loss"] += hist_loss
-                if not best_hist_loss or hist_loss < best_hist_loss:
-                    self.histogram_selection = method
-                    best_hist_loss = hist_loss
+        # Prevent repeated attribute lookups
+        histogram_methods = self.histogram_methods
+        histogram_selection = self.histogram_selection
 
-        return cast(Dict, self.histogram_methods[self.histogram_selection]["histogram"])
+        if histogram_selection is None:
+            best_hist_loss = None
+            best_method = None
+            methods = tuple(histogram_methods.keys())
+            histograms = histogram_methods
+
+            # Pre-allocate for local access and reduce attribute lookups
+            _histogram_for_profile = self._histogram_for_profile
+
+            for method in methods:
+                histogram, hist_loss = _histogram_for_profile(method)
+                method_hist = histograms[method]
+                method_hist["histogram"] = histogram
+                method_hist["current_loss"] = hist_loss
+                method_hist["total_loss"] += hist_loss
+                if (best_hist_loss is None) or (hist_loss < best_hist_loss):
+                    best_hist_loss = hist_loss
+                    best_method = method
+
+            self.histogram_selection = best_method
+            histogram_selection = (
+                best_method  # Ensure below that the right histogram is returned
+            )
+
+        return cast(Dict, histogram_methods[self.histogram_selection]["histogram"])
 
     def _get_percentile(self, percentiles: np.ndarray | list[float]) -> list[float]:
         """
