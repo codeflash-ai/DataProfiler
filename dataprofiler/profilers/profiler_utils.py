@@ -1,4 +1,5 @@
 """Contains functions for profilers."""
+
 from __future__ import annotations
 
 import collections
@@ -335,15 +336,19 @@ def biased_skew(df_series: Series) -> np.float64:
     if n < 1:
         return np.float64(np.nan)
 
-    mean = sum(df_series) / n
+    # Use numpy arrays directly for performance
+    arr = df_series.values
+    mean = arr.sum() / n
     if np.isinf(mean) or np.isnan(mean):
         return np.float64(np.nan)
 
-    diffs = df_series - mean
-    squared_diffs = diffs**2
+    diffs = arr - mean
+    # Use numpy's built-in sum which is faster and more precise for large arrays
+    squared_diffs = diffs * diffs
     cubed_diffs = squared_diffs * diffs
-    M2 = sum(squared_diffs)
-    M3 = sum(cubed_diffs)
+
+    M2 = squared_diffs.sum()
+    M3 = cubed_diffs.sum()
     # This correction comes from the pandas implementation of
     # skewness, which zeroes these values out before computation
     # due to possible floating point errors that can occur.
@@ -417,13 +422,11 @@ T = TypeVar("T", bound=Subtractable)
 def find_diff_of_numbers(
     stat1: int | float | np.float64 | np.int64 | None,
     stat2: int | float | np.float64 | np.int64 | None,
-) -> Any:
-    ...
+) -> Any: ...
 
 
 @overload
-def find_diff_of_numbers(stat1: T | None, stat2: T | None) -> Any:
-    ...
+def find_diff_of_numbers(stat1: T | None, stat2: T | None) -> Any: ...
 
 
 def find_diff_of_numbers(stat1, stat2):
