@@ -12,23 +12,15 @@ import warnings
 from abc import abstractmethod
 from itertools import islice
 from multiprocessing.pool import Pool
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Callable,
-    Dict,
-    Generator,
-    Iterator,
-    Protocol,
-    TypeVar,
-    cast,
-    overload,
-)
+from typing import (TYPE_CHECKING, Any, Callable, Dict, Generator, Iterator,
+                    Protocol, TypeVar, cast, overload)
 
 import numpy as np
 import psutil
 import scipy
 from pandas import DataFrame, Series
+
+from dataprofiler.labelers.base_data_labeler import BaseDataLabeler
 
 from ..labelers.data_labelers import DataLabeler
 
@@ -866,44 +858,45 @@ def reload_labeler_from_options_or_get_new(
     """
     data_labeler_object: BaseDataLabeler | None = None
     if "from_library" in data_labeler_load_attr:
-        data_labeler_object = (
-            (
-                # get options from DLOptions first for reuse
-                config.get("DataLabelerOptions", {})
-                .get("from_library", {})
-                .get(data_labeler_load_attr["from_library"])
-                or
-                # get options from DL column second for reuse
-                config.get("DataLabelerColumn", {})
-                .get("from_library", {})
-                .get(data_labeler_load_attr["from_library"])
-            )
-            if config is not None
-            else None
-        )
-        # load from library if not in options
-        if data_labeler_object is None:
-            data_labeler_object = DataLabeler.load_from_library(
-                data_labeler_load_attr["from_library"]
-            )
-            # save labelers so as not to reload if already loaded
-        if data_labeler_object is not None and config is not None:
-            for class_name in ["DataLabelerOptions", "DataLabelerColumn"]:
-                # get each layer of dicts to not overwrite
-                class_options = config.get(class_name, {})
-                libray_options = class_options.get("from_library", {})
-                # don't replace the one that already exists
-                if data_labeler_load_attr["from_library"] in libray_options:
-                    continue
-                labeler_options = {
-                    data_labeler_load_attr["from_library"]: data_labeler_object
-                }
-                # update the dicts each
-                libray_options.update(labeler_options)
-                class_options["from_library"] = libray_options
-                config[class_name] = class_options
+        lib_name = data_labeler_load_attr["from_library"]
+        found = False
+
+        if config is not None:
+            for class_key in ("DataLabelerOptions", "DataLabelerColumn"):
+                class_opts = config.get(class_key)
+                if class_opts:
+                    lib_opts = class_opts.get("from_library")
+                    if lib_opts:
+                        data_labeler_object = lib_opts.get(lib_name)
+                        if data_labeler_object is not None:
+                            found = True
+                            break
+
+        if not found:
+            # Use the cached function to avoid slow repeated loads
+            data_labeler_object = _cached_load_from_library(lib_name)
+            if config is not None and data_labeler_object is not None:
+                for class_key in ("DataLabelerOptions", "DataLabelerColumn"):
+                    class_opts = config.get(class_key)
+                    if class_opts is None:
+                        class_opts = {}
+                        config[class_key] = class_opts
+                    lib_opts = class_opts.get("from_library")
+                    if lib_opts is None:
+                        lib_opts = {}
+                        class_opts["from_library"] = lib_opts
+                    # don't overwrite existing
+                    if lib_name not in lib_opts:
+                        lib_opts[lib_name] = data_labeler_object
+
     elif "from_disk" in data_labeler_load_attr:
         raise NotImplementedError(
             "Models intialized from disk have not yet been made deserializable"
         )
     return data_labeler_object
+
+
+# LRU cache for the expensive load_from_library, keyed by labeler name and trainable status
+@functools.lru_cache(maxsize=8)
+def _cached_load_from_library(name: str, trainable: bool = False) -> BaseDataLabeler:
+    return DataLabeler.load_from_library(name, trainable=trainable)

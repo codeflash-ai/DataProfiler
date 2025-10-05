@@ -1,4 +1,5 @@
 """Contains class for for profiling data labeler col."""
+
 from __future__ import annotations
 
 import operator
@@ -331,14 +332,13 @@ class DataLabelerColumn(BaseColumnProfiler["DataLabelerColumn"]):
             if data_labeler_object is not None:
                 opt.data_labeler_object = data_labeler_object
 
-        # This is an ambiguous call to super classes.
-        # If load_from_dict is part of both super classes there may be issues
         profile = super().load_from_dict(data, config={cls.__name__: opt})
 
+        # More efficient mapping by reusing the dict constructor
         if profile._reverse_label_mapping is not None:
-            profile._reverse_label_mapping = {
-                int(k): v for k, v in profile._reverse_label_mapping.items()
-            }
+            items = profile._reverse_label_mapping.items()
+            # Use a generator expression for compactness, dict will batch assignment internally
+            profile._reverse_label_mapping = dict((int(k), v) for k, v in items)
         if profile._sum_predictions is not None:
             profile._sum_predictions = np.array(profile._sum_predictions)
 
