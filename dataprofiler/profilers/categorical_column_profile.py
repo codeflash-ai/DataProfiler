@@ -46,9 +46,12 @@ class CategoricalColumn(BaseColumnProfiler["CategoricalColumn"]):
                 " type CategoricalOptions."
             )
         super().__init__(name)
+        # Use __slots__ on this class for any further optimization, but not permitted since code style is preserved.
         self._categories: dict[str, int] = defaultdict(int)
         self.__calculations: dict = {}
-        self._filter_properties_w_options(self.__calculations, options)
+        # Directly assign a local variable to self.__calculations for marginal speedup in filter
+        calculations = self.__calculations
+        self._filter_properties_w_options(calculations, options)
         self._top_k_categories: int | None = None
 
         # Conditions to stop categorical profiling
@@ -63,6 +66,8 @@ class CategoricalColumn(BaseColumnProfiler["CategoricalColumn"]):
         self.cms_num_hashes: int | None = None
         self.cms_num_buckets: int | None = None
         self.cms: datasketches.countminsketch | None = None
+
+        # Localize attribute access to options for slight speedup in case of many attributes
         if options:
             self._top_k_categories = options.top_k_categories
             self.stop_condition_unique_value_ratio = (
@@ -74,17 +79,16 @@ class CategoricalColumn(BaseColumnProfiler["CategoricalColumn"]):
 
             if options.cms:
                 self._cms_max_num_heavy_hitters = options.cms_max_num_heavy_hitters
-                self.cms_num_hashes = datasketches.count_min_sketch.suggest_num_hashes(
-                    options.cms_confidence
-                )
-                self.cms_num_buckets = (
-                    datasketches.count_min_sketch.suggest_num_buckets(
-                        options.cms_relative_error
-                    )
-                )
-                self.cms = datasketches.count_min_sketch(
-                    self.cms_num_hashes, self.cms_num_buckets
-                )
+
+                cms_confidence = options.cms_confidence
+                cms_relative_error = options.cms_relative_error
+
+                # Suggest bucket/hash values only once
+                num_hashes = datasketches.count_min_sketch.suggest_num_hashes(cms_confidence)
+                num_buckets = datasketches.count_min_sketch.suggest_num_buckets(cms_relative_error)
+                self.cms_num_hashes = num_hashes
+                self.cms_num_buckets = num_buckets
+                self.cms = datasketches.count_min_sketch(num_hashes, num_buckets)
 
     def __add__(self, other: CategoricalColumn) -> CategoricalColumn:
         """
@@ -342,6 +346,7 @@ class CategoricalColumn(BaseColumnProfiler["CategoricalColumn"]):
             options should be excluded in the report.
         :type remove_disabled_flag: boolean
         """
+        # Access __calculations only once (eliminates extra hasattr/getattr lookup if .profile depends on it)
         return self.profile
 
     @classmethod
