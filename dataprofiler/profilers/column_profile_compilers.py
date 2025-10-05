@@ -1,4 +1,5 @@
 """For generating a report."""
+
 from __future__ import annotations
 
 import abc
@@ -275,24 +276,19 @@ class ColumnPrimitiveTypeProfileCompiler(
         :type remove_disabled_flag: boolean
         """
         profile: dict = {
-            "data_type_representation": dict(),
+            "data_type_representation": {},
             "data_type": None,
-            "statistics": dict(),
+            "statistics": {},
         }
         has_found_match = False
+        data_type_representation = profile["data_type_representation"]
 
-        for _, profiler in self._profiles.items():
+        for profiler in self._profiles.values():
             if not has_found_match and profiler.data_type_ratio == 1.0:
-                profile.update(
-                    {
-                        "data_type": profiler.type,
-                        "statistics": profiler.report(remove_disabled_flag),
-                    }
-                )
+                profile["data_type"] = profiler.type
+                profile["statistics"] = profiler.report(remove_disabled_flag)
                 has_found_match = True
-            profile["data_type_representation"].update(
-                dict([(profiler.type, profiler.data_type_ratio)])
-            )
+            data_type_representation[profiler.type] = profiler.data_type_ratio
         return profile
 
     @property
