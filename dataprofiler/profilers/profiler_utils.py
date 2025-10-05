@@ -1,4 +1,5 @@
 """Contains functions for profilers."""
+
 from __future__ import annotations
 
 import collections
@@ -22,7 +23,6 @@ from typing import (
     Protocol,
     TypeVar,
     cast,
-    overload,
 )
 
 import numpy as np
@@ -413,17 +413,51 @@ class Subtractable(Protocol):
 T = TypeVar("T", bound=Subtractable)
 
 
-@overload
 def find_diff_of_numbers(
     stat1: int | float | np.float64 | np.int64 | None,
     stat2: int | float | np.float64 | np.int64 | None,
 ) -> Any:
-    ...
+    """
+    Find the difference between two stats.
+
+    If there is no difference, return "unchanged".
+    For ints/floats, returns stat1 - stat2.
+
+    :param stat1: the first statistical input
+    :type stat1: Union[int, float, np.float64, np.int64, None]
+    :param stat2: the second statistical input
+    :type stat2: Union[int, float, np.float64, np.int64, None]
+    :return: the difference of the stats
+    """
+    if stat1 is None and stat2 is None:
+        pass
+    elif stat1 is None or stat2 is None:
+        return [stat1, stat2]
+    elif stat1 != stat2:
+        return stat1 - stat2
+    return "unchanged"
 
 
-@overload
 def find_diff_of_numbers(stat1: T | None, stat2: T | None) -> Any:
-    ...
+    """
+    Find the difference between two stats.
+
+    If there is no difference, return "unchanged".
+    For ints/floats, returns stat1 - stat2.
+
+    :param stat1: the first statistical input
+    :type stat1: Union[int, float, np.float64, np.int64, None]
+    :param stat2: the second statistical input
+    :type stat2: Union[int, float, np.float64, np.int64, None]
+    :return: the difference of the stats
+    """
+    if stat1 is None and stat2 is None:
+        pass
+    elif stat1 is None or stat2 is None:
+        return [stat1, stat2]
+    elif stat1 != stat2:
+        return stat1 - stat2
+    return "unchanged"
 
 
 def find_diff_of_numbers(stat1, stat2):
@@ -489,8 +523,8 @@ def find_diff_of_lists_and_sets(
     elif stat1 is None or stat2 is None:
         return [stat1, stat2]
     elif set(stat1) != set(stat2) or len(stat1) != len(stat2):
-        temp_stat1 = list(copy.deepcopy(stat1))
-        temp_stat2 = list(copy.deepcopy(stat2))
+        temp_stat1 = list(stat1)
+        temp_stat2 = list(stat2)
         shared = []
         for element in temp_stat1:
             if element in temp_stat2:
