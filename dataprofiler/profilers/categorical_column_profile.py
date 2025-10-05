@@ -649,13 +649,27 @@ class CategoricalColumn(BaseColumnProfiler["CategoricalColumn"]):
                 self._cms_max_num_heavy_hitters,
             )
         else:
+            # Fast-path: Both dicts are defaultdict(int), do direct addition w/o deep copy
             category_count = self._get_categories_full(df_series)
-            self._categories = profiler_utils.add_nested_dictionaries(
-                self._categories, category_count
-            )
+            categories = self._categories
+
+            if (
+                isinstance(categories, defaultdict)
+                and isinstance(category_count, dict)
+                and categories.default_factory is int
+            ):
+                for k, v in category_count.items():
+                    categories[k] += v
+            else:
+                self._categories = profiler_utils.add_nested_dictionaries(
+                    categories, category_count
+                )
+
             self._update_stop_condition(df_series)
             if self._stop_condition_is_met:
-                self._categories = {}
+                # clear categories if stop condition is met (as original)
+                categories.clear()
+                # self._categories = {}  # Don't reassign to {} to preserve type/refs
 
     def _update_helper(self, df_series_clean: Series, profile: dict) -> None:
         """
@@ -683,8 +697,13 @@ class CategoricalColumn(BaseColumnProfiler["CategoricalColumn"]):
             return self
 
         profile = dict(sample_size=len(df_series))
-        CategoricalColumn._update_categories(self, df_series)
-        BaseColumnProfiler._perform_property_calcs(
+
+        # Deliberate: Avoid repeatedly fetching attribute in hotpath
+        _update_categories = self._update_categories
+        _perform_property_calcs = BaseColumnProfiler._perform_property_calcs
+
+        _update_categories(df_series)
+        _perform_property_calcs(
             self,
             self.__calculations,
             df_series=df_series,
