@@ -1,4 +1,5 @@
 """Contains class that saves and loads spreadsheet data."""
+
 import csv
 import random
 import re
@@ -352,7 +353,7 @@ class CSVData(SpreadSheetDataMixin, BaseData):
         none_thresh: float = 0.5,
         str_thresh: float = 0.9,
     ) -> Optional[int]:
-        r"""
+        """
         Attempt to select the best row for which a header would be valid.
 
         :param data_as_str: Single string containing rows (lines seperated by "\n")
@@ -375,106 +376,96 @@ class CSVData(SpreadSheetDataMixin, BaseData):
         if not data_as_str or len(data_as_str) == 0:
             return None
 
-        # Ensure no "None" delimiter, delimiter is required for evaluating single cols
-        delimiter = suggested_delimiter
-        if not delimiter:
-            delimiter = ","
-        quotechar = suggested_quotechar
-        if not quotechar or len(quotechar) == 0:
-            quotechar = '"'
+        delimiter = suggested_delimiter if suggested_delimiter else ","
+        quotechar = (
+            suggested_quotechar
+            if suggested_quotechar and len(suggested_quotechar) > 0
+            else '"'
+        )
+        delimiter_regex = data_utils.get_delimiter_regex(delimiter, quotechar)
 
-        # Determine type for every cell
+        data_rows = data_as_str.split("\n")
+
         header_check_list: List[List[str]] = []
         only_string_flag = True  # Requires additional checks
-        for row in data_as_str.split("\n"):
 
-            delimiter_regex = data_utils.get_delimiter_regex(delimiter, quotechar)
+        for row in data_rows:
             row_list = re.split(delimiter_regex, row)
-
-            header_check_list.append([])
-
-            for i in range(len(row_list)):
-                cell = row_list[i].strip()
-                cell_type = data_utils.detect_cell_type(cell)
-
+            row_types = []
+            for cell in row_list:
+                stripped_cell = cell.strip()
+                cell_type = data_utils.detect_cell_type(stripped_cell)
                 if cell_type not in ["str", "none"]:
                     only_string_flag = False
-                header_check_list[-1].append(cell_type)
+                row_types.append(cell_type)
+            header_check_list.append(row_types)
 
         # Flags differences in types between each row (true/false)
-        potential_header = header_check_list[0]
         differences: List[List[bool]] = []
-        for i in range(0, len(header_check_list)):
-            differences.append([])
+        if not header_check_list:
+            return None
 
-            # Identify if the row has any data
-            len_header_check = len(header_check_list[i])
-            len_pot_header = len(potential_header)
-            len_not_none = len(header_check_list[i]) - header_check_list[i].count(
-                "none"
-            )
+        potential_header = header_check_list[0]
+        len_ph = len(potential_header)
+
+        for i, row_types in enumerate(header_check_list):
+            len_row = len(row_types)
+            len_not_none = len_row - row_types.count("none")
 
             # If row has more elements or has no data, mark as "skip",
             # no difference
-            if len_not_none > len_pot_header or len_not_none == 0:
-                differences[i] = [False] * len_header_check
+            if len_not_none > len_ph or len_not_none == 0:
+                differences.append([False] * len_row)
             else:
-                for j in range(len_header_check):
+                differences_row = []
+                for j, cell_type in enumerate(row_types):
                     diff_flag = False
-                    if (
-                        j >= len_pot_header
-                        or header_check_list[i][j] != potential_header[j]
-                    ):
+                    if j >= len_ph or cell_type != potential_header[j]:
                         diff_flag = True
-                    differences[i].append(diff_flag)
+                    differences_row.append(diff_flag)
+                differences.append(differences_row)
 
             # If there is data in the row, set new max potential header to current row
             if len_not_none > 0:
-                potential_header = header_check_list[i]
+                potential_header = row_types
+                len_ph = len(potential_header)
 
         # Predicts the last row that could be the header, given the criteria
         prior_len = 0
         row_classic_header_ends = None
         change_flag = False
-        for i in range(0, len(differences)):
 
-            # Skip if there's nothing in the given row
-            if len(header_check_list[i]) == 0:
+        for i, row_types in enumerate(header_check_list):
+            row_len = len(row_types)
+            if row_len == 0:
                 continue
 
-            # Determine ratio of none in row, must be BELOW threshold
-            none = float(header_check_list[i].count("none")) / float(
-                len(header_check_list[i])
-            )
+            none_count = row_types.count("none")
+            none_ratio = float(none_count) / float(row_len)
+            diff_count = differences[i].count(True)
+            diff_ratio = float(diff_count) / float(row_len)
+            rstr_ratio = float(
+                row_types.count("str")
+                + row_types.count("upstr")
+                + row_types.count("none")
+            ) / float(row_len)
 
-            # Find percent of differences between prior row, must be BELOW threshold
-            diff = float(differences[i].count(True)) / float(len(differences[i]))
-
-            # Determine percent of string, uppercase string or none in row,
-            # must be ABOVE threshold
-            rstr = float(
-                header_check_list[i].count("str")
-                + header_check_list[i].count("upstr")
-                + header_check_list[i].count("none")
-            )
-            rstr /= float(len(header_check_list[i]))
-
-            # Determines if number of elements in the row is increasing or decreasing
-            len_increase = False
-            len_not_none = len(header_check_list[i]) - header_check_list[i].count(
-                "none"
-            )
-            if len_not_none >= prior_len and len_not_none > 0:
+            len_not_none = row_len - none_count
+            len_increase = len_not_none >= prior_len and len_not_none > 0
+            if len_increase:
                 prior_len = len_not_none
-                len_increase = True
 
             # Returns the last row that could reasonably be the header
-            if rstr > str_thresh and none < none_thresh and diff < diff_thresh:
+            if (
+                rstr_ratio > str_thresh
+                and none_ratio < none_thresh
+                and diff_ratio < diff_thresh
+            ):
                 if len_increase and not change_flag:
                     row_classic_header_ends = i
 
             # If difference occurs & data in row, mark as change
-            if diff > 0 and len_not_none > 0:
+            if diff_ratio > 0 and len_not_none > 0:
                 change_flag = True
 
         # If change in statistics never occurs, return no header
@@ -484,57 +475,39 @@ class CSVData(SpreadSheetDataMixin, BaseData):
         # Attempt to resolve case where only strings in every cell
         if only_string_flag:
             col_stats = {}
-            rows = data_as_str.split("\n")
-            for i in range(0, len(rows)):
+            num_rows = len(data_rows)
+            num_cols = 0
+            pre_split_cells = [re.split(delimiter_regex, row) for row in data_rows]
+            for i, cells in enumerate(pre_split_cells):
+                num_cols = max(num_cols, len(cells))
+                for j, cell in enumerate(cells):
+                    word_count = len(cell.strip().split()) if cell.strip() else 0
 
-                delimiter_regex = data_utils.get_delimiter_regex(delimiter, quotechar)
-                cells = re.split(delimiter_regex, rows[i])
-
-                for j in range(0, len(cells)):
-
-                    # Determine number of words in cell
-                    word_count = 0
-                    if len(cells[j].strip()) > 0:
-                        words = cells[j].strip().split(" ")
-                        word_count = len(words)
-
-                    # First row, set base
                     if j not in col_stats:
                         col_stats[j] = {"max": word_count, "min": word_count}
-
-                    # Identify min / max for a column
                     if word_count > col_stats[j]["max"]:
                         col_stats[j]["max"] = word_count
                     if word_count < col_stats[j]["min"]:
                         col_stats[j]["min"] = word_count
-
-                    # First index with value
                     if "first_index_with_value" not in col_stats[j] and word_count > 0:
                         col_stats[j]["first_index_with_value"] = i
 
             # Identify columns with variance
-            variance = [False] * len(col_stats.keys())
+            variance = [False] * len(col_stats)
             last_row_with_first_col_value = 0
             last_row_with_first_col_value_count = 0
-            for i in col_stats.keys():
-                col = col_stats[i]
-
-                # Determines if there's variance in the column
+            for idx, col in col_stats.items():
                 if (col["max"] - col["min"]) > 1:
-                    variance[i] = True
-
-                # First last row, keeps a count of new col first in row
+                    variance[idx] = True
                 if "first_index_with_value" in col:
-                    if col["first_index_with_value"] > last_row_with_first_col_value:
-                        last_row_with_first_col_value = col["first_index_with_value"]
+                    val_index = col["first_index_with_value"]
+                    if val_index > last_row_with_first_col_value:
+                        last_row_with_first_col_value = val_index
                         last_row_with_first_col_value_count = 1
-                    elif col["first_index_with_value"] == last_row_with_first_col_value:
+                    elif val_index == last_row_with_first_col_value:
                         last_row_with_first_col_value_count += 1
 
-            # Ensures there is at least some variance
             if variance.count(True) > 0:
-
-                # Ensures most first lines are the same row
                 if last_row_with_first_col_value_count > (len(variance) // 2):
                     row_classic_header_ends = last_row_with_first_col_value
 
