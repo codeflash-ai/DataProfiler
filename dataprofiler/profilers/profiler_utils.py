@@ -1,4 +1,5 @@
 """Contains functions for profilers."""
+
 from __future__ import annotations
 
 import collections
@@ -283,7 +284,12 @@ def generate_pool(
 
 def overlap(x1: int | Any, x2: int | Any, y1: int | Any, y2: int | Any) -> bool:
     """Return True iff [x1:x2] overlaps with [y1:y2]."""
-    if not all(isinstance(i, int) for i in [x1, x2, y1, y2]):
+    if not (
+        isinstance(x1, int)
+        and isinstance(x2, int)
+        and isinstance(y1, int)
+        and isinstance(y2, int)
+    ):
         return False
     return (y1 <= x1 <= y2) or (y1 <= x2 <= y2) or (x1 <= y1 <= x2) or (x1 <= y2 <= x2)
 
@@ -417,13 +423,11 @@ T = TypeVar("T", bound=Subtractable)
 def find_diff_of_numbers(
     stat1: int | float | np.float64 | np.int64 | None,
     stat2: int | float | np.float64 | np.int64 | None,
-) -> Any:
-    ...
+) -> Any: ...
 
 
 @overload
-def find_diff_of_numbers(stat1: T | None, stat2: T | None) -> Any:
-    ...
+def find_diff_of_numbers(stat1: T | None, stat2: T | None) -> Any: ...
 
 
 def find_diff_of_numbers(stat1, stat2):
