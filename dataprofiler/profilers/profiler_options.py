@@ -1060,15 +1060,23 @@ class CorrelationOptions(BaseInspectorOptions["CorrelationOptions"]):
         errors = super()._validate_helper(variable_path=variable_path)
 
         if self.columns is not None and (
-            not isinstance(self.columns, list)
-            or len(self.columns) <= 1
-            or not all(isinstance(item, str) for item in self.columns)
+            not isinstance(self.columns, list) or len(self.columns) <= 1
         ):
             errors.append(
                 "{}.columns must be None "
                 "or list of strings "
                 "with at least two elements.".format(variable_path)
             )
+        elif self.columns is not None:
+            # Use a for-loop for faster exit on first non-str
+            for item in self.columns:
+                if not isinstance(item, str):
+                    errors.append(
+                        "{}.columns must be None "
+                        "or list of strings "
+                        "with at least two elements.".format(variable_path)
+                    )
+                    break
         return errors
 
 
