@@ -1,4 +1,5 @@
 """Contains class for profiling datetime column."""
+
 from __future__ import annotations
 
 import datetime
@@ -216,7 +217,7 @@ class DateTimeColumn(BaseColumnPrimitiveTypeProfiler["DateTimeColumn"]):
         :return: either the str converted into a date format, or Nan
         """
         try:
-            converted_date: (datetime.datetime | float) = datetime.datetime.strptime(
+            converted_date: datetime.datetime | float = datetime.datetime.strptime(
                 date, date_format
             )
         except (ValueError, TypeError):
@@ -237,7 +238,7 @@ class DateTimeColumn(BaseColumnPrimitiveTypeProfiler["DateTimeColumn"]):
         """
         try:
             new_date: str | float = pattern.sub(r"\1", date)
-        except (TypeError):
+        except TypeError:
             new_date = np.nan
         return new_date
 
@@ -358,7 +359,7 @@ class DateTimeColumn(BaseColumnPrimitiveTypeProfiler["DateTimeColumn"]):
         num_samples_to_check = 50
         thresh = 0.10
         sample_size = min(num_samples_to_check, len(df_series))
-        profile = self._get_datetime_profile(df_series.sample(sample_size))
+        profile = self._get_datetime_profile(df_series.iloc[:sample_size])
 
         if profile["match_count"] / sample_size < thresh:
             return False
@@ -436,7 +437,6 @@ class DateTimeColumn(BaseColumnPrimitiveTypeProfiler["DateTimeColumn"]):
         if len(df_series) == 0:
             return self
 
-        df_series = df_series.reset_index(drop=True)
         profile = {"sample_size": len(df_series), "match_count": 0}
         if self._is_subset_datetime_column(df_series):
             self._update_datetime(df_series, {}, profile)
