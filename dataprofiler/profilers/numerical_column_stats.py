@@ -257,9 +257,9 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
 
         if self.user_set_histogram_bin is None:
             for method in self.histogram_bin_method_names:
-                self.histogram_methods[method][
-                    "suggested_bin_count"
-                ] = histogram_utils._calculate_bins_from_profile(self, method)
+                self.histogram_methods[method]["suggested_bin_count"] = (
+                    histogram_utils._calculate_bins_from_profile(self, method)
+                )
 
         self._get_quantiles()
 
@@ -433,49 +433,64 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
         objects in from their serialized saved format
         """
 
+        # Localize numpy functions to avoid attribute lookups in tight loops
+        np_float64 = np.float64
+        np_int64 = np.int64
+        np_array = np.array
+        np_isnan = np.isnan
+
         def convert_histogram_key_types_to_np(histogram_info: dict):
             if histogram_info["total_loss"] is not None:
-                histogram_info["total_loss"] = np.float64(histogram_info["total_loss"])
+                histogram_info["total_loss"] = np_float64(histogram_info["total_loss"])
 
             if histogram_info["current_loss"] is not None:
-                histogram_info["current_loss"] = np.float64(
+                histogram_info["current_loss"] = np_float64(
                     histogram_info["current_loss"]
                 )
 
             # Convert hist lists to numpy arrays
-            for key in histogram_info["histogram"].keys():
-                if histogram_info["histogram"][key] is not None:
-                    histogram_info["histogram"][key] = np.array(
-                        histogram_info["histogram"][key]
-                    )
+            hist = histogram_info["histogram"]
+            for key in hist:
+                v = hist[key]
+                if v is not None and not isinstance(v, np.ndarray):
+                    hist[key] = np_array(v)
             return histogram_info
 
-        self._stored_histogram = convert_histogram_key_types_to_np(
-            self._stored_histogram
-        )
+        # Avoid redundant local variables for access
+        _stored_hist = self._stored_histogram
+        self._stored_histogram = convert_histogram_key_types_to_np(_stored_hist)
 
-        # Convert hist method attributes to correct types
-        for key in self.histogram_methods.keys():
-            self.histogram_methods[key] = convert_histogram_key_types_to_np(
-                self.histogram_methods[key]
-            )
+        # Use items() to avoid repeated lookups and create a fast snapshot of keys
+        histogram_methods = self.histogram_methods
+        for key, value in histogram_methods.items():
+            histogram_methods[key] = convert_histogram_key_types_to_np(value)
 
-        if self.min is not None:
-            self.min = np.float64(self.min)
-        if self.max is not None:
-            self.max = np.float64(self.max)
-        if self.sum is not None:
-            self.sum = np.float64(self.sum)
-        if self.num_zeros is not None:
-            self.num_zeros = np.int64(self.num_zeros)
-        if self.num_negatives is not None:
-            self.num_negatives = np.int64(self.num_negatives)
-        if not np.isnan(self._biased_variance):
-            self._biased_variance = np.float64(self._biased_variance)
-        if not np.isnan(self._biased_skewness):
-            self._biased_skewness = np.float64(self._biased_skewness)
-        if not np.isnan(self._biased_kurtosis):
-            self._biased_kurtosis = np.float64(self._biased_kurtosis)
+        # Inline fast-path numeric casts with local functions, avoid redundant .isnan() when possible
+        v = self.min
+        if v is not None and not isinstance(v, np_float64):
+            self.min = np_float64(v)
+        v = self.max
+        if v is not None and not isinstance(v, np_float64):
+            self.max = np_float64(v)
+        v = self.sum
+        if v is not None and not isinstance(v, np_float64):
+            self.sum = np_float64(v)
+        v = self.num_zeros
+        if v is not None and not isinstance(v, np_int64):
+            self.num_zeros = np_int64(v)
+        v = self.num_negatives
+        if v is not None and not isinstance(v, np_int64):
+            self.num_negatives = np_int64(v)
+
+        v = self._biased_variance
+        if v is not None and not np_isnan(v):
+            self._biased_variance = np_float64(v)
+        v = self._biased_skewness
+        if v is not None and not np_isnan(v):
+            self._biased_skewness = np_float64(v)
+        v = self._biased_kurtosis
+        if v is not None and not np_isnan(v):
+            self._biased_kurtosis = np_float64(v)
 
     def diff(
         self,
@@ -1040,10 +1055,7 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
             / N**3
         )
         third_term = (
-            6
-            * delta**2
-            * (match_count1**2 * M2_2 + match_count2**2 * M2_1)
-            / N**2
+            6 * delta**2 * (match_count1**2 * M2_2 + match_count2**2 * M2_1) / N**2
         )
         fourth_term = 4 * delta * (match_count1 * M3_2 - match_count2 * M3_1) / N
         M4 = first_term + second_term + third_term + fourth_term
