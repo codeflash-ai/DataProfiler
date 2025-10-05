@@ -1,4 +1,5 @@
 """Contains functions for checking for installations/dependencies."""
+
 import sys
 import warnings
 from typing import Any, Callable, List
@@ -35,13 +36,13 @@ def require_module(names: List[str]) -> Callable:
 
     def check_module(f: Callable) -> Callable:
         def new_f(*args: Any, **kwds: Any) -> Any:
+            sys_modules = sys.modules
             for module_name in names:
-                if module_name not in sys.modules.keys():
-                    # attempt to reload if missing
+                if module_name not in sys_modules:
                     import importlib
 
-                    importlib.reload(sys.modules[f.__module__])
-                    if module_name not in sys.modules.keys():
+                    importlib.reload(sys_modules[f.__module__])
+                    if module_name not in sys_modules:
                         warn_missing_module(f.__name__, module_name)
                         return
             return f(*args, **kwds)
