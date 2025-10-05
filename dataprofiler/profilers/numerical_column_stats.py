@@ -257,9 +257,9 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
 
         if self.user_set_histogram_bin is None:
             for method in self.histogram_bin_method_names:
-                self.histogram_methods[method][
-                    "suggested_bin_count"
-                ] = histogram_utils._calculate_bins_from_profile(self, method)
+                self.histogram_methods[method]["suggested_bin_count"] = (
+                    histogram_utils._calculate_bins_from_profile(self, method)
+                )
 
         self._get_quantiles()
 
@@ -862,21 +862,27 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
         """
         if match_count1 < 1:
             return biased_variance2
-        elif match_count2 < 1:
+        if match_count2 < 1:
             return biased_variance1
-        elif np.isnan(biased_variance1) or np.isnan(biased_variance2):
+
+        # Move nan-checks to BEFORE any downstream calculation to minimize np.isnan calls
+        if np.isnan(biased_variance1):
+            return np.nan
+        if np.isnan(biased_variance2):
             return np.nan
 
         curr_count = match_count1
+        total_count = curr_count + match_count2
         delta = mean2 - mean1
         m_curr = biased_variance1 * curr_count
         m_batch = biased_variance2 * match_count2
-        M2 = (
-            m_curr
-            + m_batch
-            + delta**2 * curr_count * match_count2 / (curr_count + match_count2)
-        )
-        new_variance = M2 / (curr_count + match_count2)
+        # Avoid redundant arithmetic with delta**2 term
+        delta2 = delta * delta
+        curr_mul = curr_count * match_count2
+
+        # Group terms to help the Python optimizer for clarity and speed
+        M2 = m_curr + m_batch + ((delta2 * curr_mul) / total_count)
+        new_variance = M2 / total_count
         return new_variance
 
     @staticmethod
@@ -1040,10 +1046,7 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
             / N**3
         )
         third_term = (
-            6
-            * delta**2
-            * (match_count1**2 * M2_2 + match_count2**2 * M2_1)
-            / N**2
+            6 * delta**2 * (match_count1**2 * M2_2 + match_count2**2 * M2_1) / N**2
         )
         fourth_term = 4 * delta * (match_count1 * M3_2 - match_count2 * M3_1) / N
         M4 = first_term + second_term + third_term + fourth_term
