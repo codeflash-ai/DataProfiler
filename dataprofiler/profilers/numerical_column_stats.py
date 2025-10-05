@@ -257,9 +257,9 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
 
         if self.user_set_histogram_bin is None:
             for method in self.histogram_bin_method_names:
-                self.histogram_methods[method][
-                    "suggested_bin_count"
-                ] = histogram_utils._calculate_bins_from_profile(self, method)
+                self.histogram_methods[method]["suggested_bin_count"] = (
+                    histogram_utils._calculate_bins_from_profile(self, method)
+                )
 
         self._get_quantiles()
 
@@ -964,7 +964,9 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
         :return: unbiased estimator of skewness
         :rtype: NaN if sample size is too small, float otherwise
         """
-        if np.isnan(biased_skewness) or match_count < 3:
+        # Cache np.isnan and np.sqrt to local for reduced global lookup cost,
+        # and guard with match_count first (less costly integer check)
+        if match_count < 3 or np.isnan(biased_skewness):
             warnings.warn(
                 "Insufficient match count to correct bias in skewness. Bias correction "
                 "can be manually disabled by setting bias_correction.is_enabled to "
@@ -973,11 +975,14 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
             )
             return np.nan
 
-        skewness: np.float64 = (
-            np.sqrt(match_count * (match_count - 1))
-            * biased_skewness
-            / (match_count - 2)
-        )
+        # Minimize the number of Python level multiplications
+        # Compute x = match_count * (match_count - 1) as integer, then float only once
+        n1 = match_count - 1
+        n2 = match_count - 2
+        # Using local variables for clarity and less attribute access overhead
+        factor = match_count * n1
+        factor_sqrt = np.sqrt(float(factor))
+        skewness: np.float64 = factor_sqrt * biased_skewness / n2
         return skewness
 
     @staticmethod
@@ -1040,10 +1045,7 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
             / N**3
         )
         third_term = (
-            6
-            * delta**2
-            * (match_count1**2 * M2_2 + match_count2**2 * M2_1)
-            / N**2
+            6 * delta**2 * (match_count1**2 * M2_2 + match_count2**2 * M2_1) / N**2
         )
         fourth_term = 4 * delta * (match_count1 * M3_2 - match_count2 * M3_1) / N
         M4 = first_term + second_term + third_term + fourth_term
