@@ -257,9 +257,9 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
 
         if self.user_set_histogram_bin is None:
             for method in self.histogram_bin_method_names:
-                self.histogram_methods[method][
-                    "suggested_bin_count"
-                ] = histogram_utils._calculate_bins_from_profile(self, method)
+                self.histogram_methods[method]["suggested_bin_count"] = (
+                    histogram_utils._calculate_bins_from_profile(self, method)
+                )
 
         self._get_quantiles()
 
@@ -371,24 +371,56 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
 
         :return:
         """
-        profile = dict(
-            min=self.np_type_to_type(self.min),
-            max=self.np_type_to_type(self.max),
-            mode=self.np_type_to_type(self.mode),
-            median=self.np_type_to_type(self.median),
-            sum=self.np_type_to_type(self.sum),
-            mean=self.np_type_to_type(self.mean),
-            variance=self.np_type_to_type(self.variance),
-            stddev=self.np_type_to_type(self.stddev),
-            skewness=self.np_type_to_type(self.skewness),
-            kurtosis=self.np_type_to_type(self.kurtosis),
-            histogram=self._get_best_histogram_for_profile(),
-            quantiles=self.quantiles,
-            median_abs_deviation=self.np_type_to_type(self.median_abs_deviation),
-            num_zeros=self.np_type_to_type(self.num_zeros),
-            num_negatives=self.np_type_to_type(self.num_negatives),
-            times=self.times,
-        )
+        # Fast path: For np_type_to_type, avoid function call when already base type.
+        _np_integer = np.integer
+        _np_floating = np.floating
+
+        def _np_type_to_type(val):
+            if isinstance(val, _np_integer):
+                return int(val)
+            if isinstance(val, _np_floating):
+                return float(val)
+            return val
+
+        # Pre-fetch all attributes and call np_type_to_type only once per attribute
+        # (local vars for method lookups for slight speedup)
+        _self = self
+
+        min_val = _np_type_to_type(_self.min)
+        max_val = _np_type_to_type(_self.max)
+        mode_val = _np_type_to_type(_self.mode)
+        median_val = _np_type_to_type(_self.median)
+        sum_val = _np_type_to_type(_self.sum)
+        mean_val = _np_type_to_type(_self.mean)
+        var_val = _np_type_to_type(_self.variance)
+        stddev_val = _np_type_to_type(_self.stddev)
+        skew_val = _np_type_to_type(_self.skewness)
+        kurt_val = _np_type_to_type(_self.kurtosis)
+        mad_val = _np_type_to_type(_self.median_abs_deviation)
+        num_zeros_val = _np_type_to_type(_self.num_zeros)
+        num_negatives_val = _np_type_to_type(_self.num_negatives)
+        hist_val = _self._get_best_histogram_for_profile()
+        quantiles_val = _self.quantiles
+        times_val = _self.times
+
+        profile = {
+            "min": min_val,
+            "max": max_val,
+            "mode": mode_val,
+            "median": median_val,
+            "sum": sum_val,
+            "mean": mean_val,
+            "variance": var_val,
+            "stddev": stddev_val,
+            "skewness": skew_val,
+            "kurtosis": kurt_val,
+            "histogram": hist_val,
+            "quantiles": quantiles_val,
+            "median_abs_deviation": mad_val,
+            "num_zeros": num_zeros_val,
+            "num_negatives": num_negatives_val,
+            "times": times_val,
+        }
 
         return profile
 
@@ -410,14 +442,16 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
         profile = self.profile()
 
         if remove_disabled_flag:
+            # Precompute those sets only once for faster lookups in loop.
+            calcs_keys = calcs_dict_keys
             profile_keys = list(profile.keys())
             for profile_key in profile_keys:
-                if profile_key in ["mode", "quantiles", "histogram"]:
-                    if "histogram_and_quantiles" in calcs_dict_keys:
+                if profile_key in {"mode", "quantiles", "histogram"}:
+                    if "histogram_and_quantiles" in calcs_keys:
                         continue
-                elif profile_key == "stddev" and "variance" in calcs_dict_keys:
+                elif profile_key == "stddev" and "variance" in calcs_keys:
                     continue
-                elif profile_key in calcs_dict_keys:
+                elif profile_key in calcs_keys:
                     continue
                 elif profile_key == "times":
                     continue
@@ -1040,10 +1074,7 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
             / N**3
         )
         third_term = (
-            6
-            * delta**2
-            * (match_count1**2 * M2_2 + match_count2**2 * M2_1)
-            / N**2
+            6 * delta**2 * (match_count1**2 * M2_2 + match_count2**2 * M2_1) / N**2
         )
         fourth_term = 4 * delta * (match_count1 * M3_2 - match_count2 * M3_1) / N
         M4 = first_term + second_term + third_term + fourth_term
