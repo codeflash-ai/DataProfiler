@@ -1,4 +1,5 @@
 """Contains class for profiling datetime column."""
+
 from __future__ import annotations
 
 import datetime
@@ -216,7 +217,7 @@ class DateTimeColumn(BaseColumnPrimitiveTypeProfiler["DateTimeColumn"]):
         :return: either the str converted into a date format, or Nan
         """
         try:
-            converted_date: (datetime.datetime | float) = datetime.datetime.strptime(
+            converted_date: datetime.datetime | float = datetime.datetime.strptime(
                 date, date_format
             )
         except (ValueError, TypeError):
@@ -237,7 +238,7 @@ class DateTimeColumn(BaseColumnPrimitiveTypeProfiler["DateTimeColumn"]):
         """
         try:
             new_date: str | float = pattern.sub(r"\1", date)
-        except (TypeError):
+        except TypeError:
             new_date = np.nan
         return new_date
 
@@ -254,67 +255,100 @@ class DateTimeColumn(BaseColumnPrimitiveTypeProfiler["DateTimeColumn"]):
         :rtype: dict
         """
         profile: dict = dict()
-        activated_date_formats: list = list()
+        activated_date_formats: list = []
         len_df = len(df_series)
-
-        is_row_datetime = pd.Series(np.full((len(df_series)), False))
-
+        # The array below is used as an indicator for whether each position has been successfully parsed
+        is_row_datetime = np.zeros(len_df, dtype=bool)
         min_value = None
         max_value = None
         min_value_obj = datetime.datetime.max
         max_value_obj = datetime.datetime.min
+        remaining_mask = np.ones(len_df, dtype=bool)
+        original_values = (
+            df_series.values
+            if isinstance(df_series, pd.Series)
+            else np.array(df_series)
+        )
+        indexed_df_series = (
+            df_series if isinstance(df_series, pd.Series) else pd.Series(df_series)
+        )
         for date_format in cls._date_formats:
             if is_row_datetime.all():
                 break
-            valid_dates = df_series.apply(
-                lambda x: cls._validate_datetime(
-                    cls._replace_day_suffix(  # type: ignore
-                        x, cls._compiled_day_suffix_regex
-                    ),
-                    date_format,
-                )
+            # Use numpy vectorized parsing via `pd.to_datetime` where possible for performance.
+            # However, we must preserve exact per-row behavior, including day suffix handling and error handling.
+            work_idx = np.flatnonzero(~is_row_datetime)
+            if work_idx.size == 0:
+                break
+            # Extract values that still need parsing as a series, to preserve original indices for assignment
+            current_df = indexed_df_series.iloc[work_idx]
+            # _replace_day_suffix on every value in current_df
+            current_strings = current_df.values
+            replaced_strings = np.fromiter(
+                (
+                    cls._replace_day_suffix(val, cls._compiled_day_suffix_regex)
+                    for val in current_strings
+                ),
+                dtype=object,
+                count=current_strings.shape[0],
             )
-
-            df_dates = valid_dates[~valid_dates.isnull()]
-
-            if "%b" in date_format and not df_dates.empty:
-                may_month = 5  # May can be %b or %B we want to force, so check
-                all_may = df_dates.apply(lambda x: x.month == may_month).all()
+            # Use pandas' to_datetime with errors='coerce' where possible
+            try:
+                parsed = pd.to_datetime(
+                    replaced_strings, format=date_format, errors="coerce", exact=True
+                )
+            except Exception:
+                parsed = pd.Series(
+                    [
+                        cls._validate_datetime(val, date_format)
+                        for val in replaced_strings
+                    ],
+                    index=current_df.index,
+                )
+            else:
+                parsed = pd.Series(parsed, index=current_df.index)
+                # Keep NaT as nulls for compatibility
+                parsed = parsed.where(~parsed.isna(), other=np.nan)
+            # If "%b" in date_format, check that not all are May, see original comment
+            if "%b" in date_format and not parsed.dropna().empty:
+                may_month = 5
+                # Only check for rows we just parsed
+                df_dates = parsed.dropna()
+                # We'll need the following to be as fast as possible:
+                months = df_dates.apply(
+                    lambda x: x.month if hasattr(x, "month") else None
+                )
+                all_may = (months == may_month).all() if not months.empty else False
                 if all_may:
-                    valid_dates[:] = np.nan
-                    df_dates = pd.Series([], dtype=object)
-
-            # Create mask to avoid null dates
-            null_date_mask = valid_dates.isnull()
-            np_date_array = df_dates.values
-
-            # check off any values which were found to be datetime
-            is_row_datetime[~is_row_datetime] = (~null_date_mask).values
-
-            if len(df_dates) > 0:
-
-                # Converts to numpy prior to finding max index
-                min_idx = np.argmin(np_date_array)
-                max_idx = np.argmax(np_date_array)
-
-                # Selects the min, ma value objects for comparison
-                tmp_min_value_obj = df_dates.iloc[min_idx]
-                tmp_max_value_obj = df_dates.iloc[max_idx]
-
-                # If minimum value, keep reference
-                if tmp_min_value_obj < min_value_obj:
-                    min_value = df_series[~null_date_mask].iloc[min_idx]
-                    min_value_obj = tmp_min_value_obj
-
-                # If maximum value, keep reference
-                if tmp_max_value_obj > max_value_obj:
-                    max_value = df_series[~null_date_mask].iloc[max_idx]
-                    max_value_obj = tmp_max_value_obj
-
-            df_series = df_series[null_date_mask]
-
-            # Get a list of all datetime format identified in column
-            new_len = len(df_series)
+                    # Invalidate this run's results
+                    parsed[:] = np.nan
+            # Mask where successfully parsed - recall: parsed.index aligns to parent index
+            notnull_mask = ~pd.isnull(parsed.values)
+            # Update is_row_datetime in the corresponding subindex to True where notnull
+            sub_idx = work_idx[notnull_mask]
+            is_row_datetime[sub_idx] = True
+            # Extract the actual datetimes/indices
+            if np.any(notnull_mask):
+                # Use df_dates for subsequent computation
+                df_dates = parsed[notnull_mask]
+                # Find min/max of dates in this batch
+                if not df_dates.empty:
+                    np_date_array = df_dates.values
+                    min_idx = np.argmin(np_date_array)
+                    max_idx = np.argmax(np_date_array)
+                    tmp_min_value_obj = df_dates.iloc[min_idx]
+                    tmp_max_value_obj = df_dates.iloc[max_idx]
+                    # The original string values at these positions:
+                    parent_idx = df_dates.index
+                    if tmp_min_value_obj < min_value_obj:
+                        min_value = original_values[parent_idx[min_idx]]
+                        min_value_obj = tmp_min_value_obj
+                    if tmp_max_value_obj > max_value_obj:
+                        max_value = original_values[parent_idx[max_idx]]
+                        max_value_obj = tmp_max_value_obj
+            # Update remaining_mask to indicate those still not parsed
+            remaining_mask = ~is_row_datetime
+            new_len = remaining_mask.sum()
             if new_len < len_df:
                 activated_date_formats.append(date_format)
                 len_df = new_len
