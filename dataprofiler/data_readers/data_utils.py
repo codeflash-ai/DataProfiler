@@ -1,4 +1,5 @@
 """Contains functions for data readers."""
+
 import json
 import logging
 import os
@@ -24,7 +25,6 @@ from typing import (
 
 import boto3
 import botocore
-import dateutil
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
@@ -35,6 +35,7 @@ from typing_extensions import TypeGuard
 from .. import dp_logging, rng_utils
 from .._typing import JSONType, Url
 from .filepath_or_buffer import FileOrBufferHandler, is_stream_buffer  # NOQA
+from dateutil.parser import parse as _parse
 
 logger = dp_logging.get_child_logger(__name__)
 
@@ -52,7 +53,7 @@ def data_generator(data_list: List[str]) -> Generator[str, None, None]:
 
 
 def generator_on_file(
-    file_object: Union[StringIO, BytesIO]
+    file_object: Union[StringIO, BytesIO],
 ) -> Generator[Union[str, bytes], None, None]:
     """
     Take a file and return a generator that returns lines.
@@ -689,19 +690,20 @@ def detect_cell_type(cell: str) -> str:
     else:
 
         try:
-            # need to ingore type bc https://github.com/python/mypy/issues/8878
-            if dateutil.parser.parse(cell, fuzzy=False):  # type:ignore
-                cell_type = "date"
-        except (ValueError, OverflowError, TypeError):
-            pass
-
-        try:
-            f_cell = float(cell)
-            cell_type = "float"
-            if f_cell.is_integer():
-                cell_type = "int"
+            int(cell)
+            cell_type = "int"
         except ValueError:
-            pass
+            try:
+                f_cell = float(cell)
+                cell_type = "float"
+                if f_cell.is_integer():
+                    cell_type = "int"
+            except ValueError:
+                try:
+                    if _parse(cell, fuzzy=False):  # type:ignore
+                        cell_type = "date"
+                except (ValueError, OverflowError, TypeError):
+                    pass
 
         if cell.isupper():
             cell_type = "upstr"
@@ -768,23 +770,23 @@ def find_nth_loc(
     if not string or not search_query or 0 >= n:
         return -1, 0
 
-    # create the search pattern
     pattern = re.escape(search_query)
     if ignore_consecutive:
         pattern += "+"
-    r_iter = re.finditer(pattern, string)
+    # Find all matches in one pass for efficiency
+    matches = list(re.finditer(pattern, string))
+    total_matches = len(matches)
 
-    # Find index of nth occurrence of search_query
-    idx = id_count = -1
-    for id_count, match in enumerate(r_iter):
-        idx = match.start()
-        if id_count + 1 == n:
-            break
+    # The id_count should be min(total_matches, n)
+    id_count = min(total_matches, n)
 
-    # enumerate starts at 0 and so does the init
-    id_count += 1
+    if id_count == 0:
+        # No match found
+        return len(string), 0 if total_matches == 0 else 1
 
-    if id_count != n:
+    if id_count == n:
+        idx = matches[n - 1].start()
+    else:
         idx = len(string)
 
     return idx, id_count
