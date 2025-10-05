@@ -7,6 +7,7 @@ https://github.com/numpy/numpy/tree/main
 A copy of the license for numpy is available here:
 https://github.com/numpy/numpy/blob/main/LICENSE.txt
 """
+
 import operator
 from typing import List, Optional, Tuple, Union
 
@@ -27,11 +28,12 @@ def _get_maximum_from_profile(profile):
 
     :return: dataset maximum
     """
-    return (
-        profile.max
-        if profile.max is not None
-        else profile._stored_histogram["histogram"]["bin_edges"][-1]
-    )
+    max_value = profile.max
+    if max_value is not None:
+        return max_value
+    # Accessing nested dict multiple times is slower; use local variable.
+    bin_edges = profile._stored_histogram["histogram"]["bin_edges"]
+    return bin_edges[-1]
 
 
 def _get_minimum_from_profile(profile):
@@ -43,11 +45,11 @@ def _get_minimum_from_profile(profile):
 
     :return: dataset minimum
     """
-    return (
-        profile.min
-        if profile.min is not None
-        else profile._stored_histogram["histogram"]["bin_edges"][0]
-    )
+    min_value = profile.min
+    if min_value is not None:
+        return min_value
+    bin_edges = profile._stored_histogram["histogram"]["bin_edges"]
+    return bin_edges[0]
 
 
 def _get_dataset_size_from_profile(profile):
@@ -59,11 +61,16 @@ def _get_dataset_size_from_profile(profile):
 
     :return: dataset size
     """
-    try:
-        dataset_size = profile.match_count
-    except AttributeError:
-        dataset_size = sum(profile._stored_histogram["histogram"]["bin_counts"])
-    return dataset_size
+    # Prefer hasattr over try/except for better performance
+    if hasattr(profile, "match_count"):
+        return profile.match_count
+    else:
+        bin_counts = profile._stored_histogram["histogram"]["bin_counts"]
+        # For a numpy array or list, using np.sum is faster for large arrays
+        if isinstance(bin_counts, np.ndarray):
+            return int(np.sum(bin_counts))
+        else:
+            return sum(bin_counts)
 
 
 def _ptp(maximum: float, minimum: float):
@@ -79,7 +86,9 @@ def _ptp(maximum: float, minimum: float):
 
     :return: the difference between the maximum and minimum
     """
-    return np.subtract(maximum, minimum)
+    # np.subtract(float, float) is no faster than standard subtraction
+    # for scalars, so use plain subtraction for speed
+    return maximum - minimum
 
 
 def _calc_doane_bin_width_from_profile(profile):
@@ -164,8 +173,9 @@ def _calc_sqrt_bin_width_from_profile(profile):
     dataset_size = _get_dataset_size_from_profile(profile)
     minimum = _get_minimum_from_profile(profile)
     maximum = _get_maximum_from_profile(profile)
-
-    return _ptp(maximum, minimum) / np.sqrt(dataset_size)
+    # np.sqrt is still faster for large or complex numbers, but for float int(np.sqrt(x)) is only marginally slower,
+    # so we keep np.sqrt for larger compatibility. Also, force np.sqrt argument to float for (slightly) better precision.
+    return _ptp(maximum, minimum) / np.sqrt(float(dataset_size))
 
 
 def _calc_fd_bin_width_from_profile(profile):
