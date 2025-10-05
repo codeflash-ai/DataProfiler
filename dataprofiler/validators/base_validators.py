@@ -46,7 +46,7 @@ class Validator:
         self.config: dict | None = None
         self.report: dict | None = None
         self.validation_run: bool = False
-        self.validation_report: dict = dict()
+        self.validation_report: dict = {}
 
     def validate(self, data: pd.DataFrame | dd.DataFrame, config: dict) -> None:
         """
@@ -137,11 +137,9 @@ class Validator:
 
     def get(self) -> dict:
         """Get the results of the validation run."""
-        if self.validation_run:
-            return self.validation_report
-
-        else:
+        if not self.validation_run:
             raise Warning(
                 "Precondition for get method not met. Must validate data prior "
                 "to getting results."
             )
+        return self.validation_report
