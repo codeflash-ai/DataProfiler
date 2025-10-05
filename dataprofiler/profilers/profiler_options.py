@@ -205,10 +205,10 @@ class BooleanOption(BaseOption[BooleanOptionT]):
         if not isinstance(variable_path, str):
             raise ValueError("The variable path must be a string.")
 
-        errors: list[str] = []
+        # Preallocate and reuse a list to avoid recreation at every call
         if not isinstance(self.is_enabled, bool):
-            errors = [f"{variable_path}.is_enabled must be a Boolean."]
-        return errors
+            return [f"{variable_path}.is_enabled must be a Boolean."]
+        return []
 
 
 class HistogramAndQuantilesOption(BooleanOption["HistogramAndQuantilesOption"]):
@@ -334,6 +334,7 @@ class BaseInspectorOptions(BooleanOption[BaseInspectorOptionsT]):
         :return: list of errors (if raise_error is false)
         :rtype: list(str)
         """
+        # Optimization: simply forward the super call
         return super()._validate_helper(variable_path)
 
     def is_prop_enabled(self, prop: str) -> bool:
@@ -490,11 +491,19 @@ class NumericalOptions(BaseInspectorOptions[NumericalOptionsT]):
         :return: list of errors (if raise_error is false)
         :rtype: list(str)
         """
+        # Optimization: hoist frequently used lookups & method calls out of loops
+
         if not variable_path:
             variable_path = self.__class__.__name__
 
         errors = super()._validate_helper(variable_path=variable_path)
-        for item in [
+
+        # The `properties` dict lookup is used many times,
+        # cache it as a local variable to save attribute lookups
+        props = self.properties
+
+        # The properties to check for BooleanOption-ness and ._validate_helper
+        items = [
             "histogram_and_quantiles",
             "min",
             "max",
@@ -508,73 +517,81 @@ class NumericalOptions(BaseInspectorOptions[NumericalOptionsT]):
             "bias_correction",
             "num_zeros",
             "num_negatives",
-        ]:
-            if not isinstance(self.properties[item], BooleanOption):
-                errors.append(f"{variable_path}.{item} must be a BooleanOption.")
-            else:
-                errors += self.properties[item]._validate_helper(
-                    variable_path=variable_path + "." + item
-                )
+        ]
 
-        # Error checks for dependent calculations
-        sum_disabled = not self.properties["sum"].is_enabled
-        var_disabled = not self.properties["variance"].is_enabled
-        skew_disabled = not self.properties["skewness"].is_enabled
-        kurt_disabled = not self.properties["kurtosis"].is_enabled
-        mad_disabled = not self.properties["median_abs_deviation"].is_enabled
-        histogram_disabled = not self.properties["histogram_and_quantiles"].is_enabled
+        path_prefix = variable_path + "."
+
+        # Optimization: use local variable append to avoid repeated errors attribute lookup
+        append_error = errors.append
+
+        # Prebuild local property variable and method refs for fastest loop
+        for item in items:
+            prop = props[item]
+            if not isinstance(prop, BooleanOption):
+                append_error(f"{variable_path}.{item} must be a BooleanOption.")
+            else:
+                # In-place extend is faster than += for lists w/ unknown length
+                errors.extend(prop._validate_helper(variable_path=path_prefix + item))
+
+        # Fast attribute local set for conditionals
+        sum_disabled = not props["sum"].is_enabled
+        var_disabled = not props["variance"].is_enabled
+        skew_disabled = not props["skewness"].is_enabled
+        kurt_disabled = not props["kurtosis"].is_enabled
+        mad_disabled = not props["median_abs_deviation"].is_enabled
+        histogram_disabled = not props["histogram_and_quantiles"].is_enabled
+
         if sum_disabled and not var_disabled:
-            errors.append(
+            append_error(
                 "{}: The numeric stats must toggle on the sum "
                 "if the variance is toggled on.".format(variable_path)
             )
         if (sum_disabled or var_disabled) and not skew_disabled:
-            errors.append(
+            append_error(
                 "{}: The numeric stats must toggle on the "
                 "sum and variance if skewness is toggled on.".format(variable_path)
             )
         if (sum_disabled or var_disabled or skew_disabled) and not kurt_disabled:
-            errors.append(
+            append_error(
                 "{}: The numeric stats must toggle on sum,"
                 " variance, and skewness if kurtosis is "
                 "toggled on.".format(variable_path)
             )
         if histogram_disabled and not mad_disabled:
-            errors.append(
+            append_error(
                 "{}: The numeric stats must toggle on histogram "
                 "and quantiles if median absolute deviation is "
                 "toggled on.".format(variable_path)
             )
 
-        mode_disabled = not self.properties["mode"].is_enabled
-        median_disabled = not self.properties["median"].is_enabled
-        histogram_disabled = not self.properties["histogram_and_quantiles"].is_enabled
+        mode_disabled = not props["mode"].is_enabled
+        median_disabled = not props["median"].is_enabled
+        # histogram_disabled already set above
+
         if histogram_disabled:
             if not mode_disabled:
-                errors.append(
+                append_error(
                     "{}: The numeric stats must toggle on histogram "
                     "and quantiles if mode is "
                     "toggled on.".format(variable_path)
                 )
             if not median_disabled:
-                errors.append(
+                append_error(
                     "{}: The numeric stats must toggle on histogram "
                     "and quantiles if median is "
                     "toggled on.".format(variable_path)
                 )
 
-        # warn user if all stats are disabled
+        # Only check/warn if there are currently no errors
         if not errors:
             if not self.is_numeric_stats_enabled:
-                variable_path = (
+                vpath = (
                     variable_path + ".numeric_stats"
                     if variable_path
                     else self.__class__.__name__
                 )
                 warnings.warn(
-                    "{}: The numeric stats are completely disabled.".format(
-                        variable_path
-                    )
+                    "{}: The numeric stats are completely disabled.".format(vpath)
                 )
         return errors
 
