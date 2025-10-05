@@ -205,10 +205,10 @@ class BooleanOption(BaseOption[BooleanOptionT]):
         if not isinstance(variable_path, str):
             raise ValueError("The variable path must be a string.")
 
-        errors: list[str] = []
+        # Avoid list allocation if no error (performance, less memory pressure)
         if not isinstance(self.is_enabled, bool):
-            errors = [f"{variable_path}.is_enabled must be a Boolean."]
-        return errors
+            return [f"{variable_path}.is_enabled must be a Boolean."]
+        return []
 
 
 class HistogramAndQuantilesOption(BooleanOption["HistogramAndQuantilesOption"]):
@@ -658,21 +658,16 @@ class PrecisionOptions(BooleanOption["PrecisionOptions"]):
         :rtype: List of strings
         """
         errors = super()._validate_helper(variable_path=variable_path)
-        if self.sample_ratio is not None:
-            if not isinstance(self.sample_ratio, float) and not isinstance(
-                self.sample_ratio, int
-            ):
+        # Ensure type and bounds-checking are only performed once per value
+        ratio = self.sample_ratio
+        if ratio is not None:
+            # Use isinstance(ratio, (float, int)) for one check
+            if not isinstance(ratio, (float, int)):
                 errors.append(f"{variable_path}.sample_ratio must be a float.")
-            if (
-                isinstance(self.sample_ratio, float)
-                or isinstance(self.sample_ratio, int)
-            ) and (self.sample_ratio < 0 or self.sample_ratio > 1.0):
+            elif ratio < 0 or ratio > 1.0:
                 errors.append(
-                    "{}.sample_ratio must be a float between 0 and 1.".format(
-                        variable_path
-                    )
+                    f"{variable_path}.sample_ratio must be a float between 0 and 1."
                 )
-
         return errors
 
 
