@@ -165,7 +165,7 @@ class BaseOption(Generic[BaseOptionT]):
         for attr, value in data.items():
             if isinstance(value, dict) and "class" in value:
                 value = load_option(value, config)
-            setattr(option, attr, value)
+            option.__dict__[attr] = value
 
         return option
 
