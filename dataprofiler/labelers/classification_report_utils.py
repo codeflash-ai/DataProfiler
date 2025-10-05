@@ -1,4 +1,5 @@
 """Contains functions for classification."""
+
 from __future__ import annotations
 
 import warnings
@@ -126,17 +127,13 @@ def precision_recall_fscore_support(
 
     Returns
     -------
-    precision : float (if average is not None) or array of float, shape =\
-        [n_unique_labels]
+    precision : float (if average is not None) or array of float, shape =        [n_unique_labels]
 
-    recall : float (if average is not None) or array of float, , shape =\
-        [n_unique_labels]
+    recall : float (if average is not None) or array of float, , shape =        [n_unique_labels]
 
-    fbeta_score : float (if average is not None) or array of float, shape =\
-        [n_unique_labels]
+    fbeta_score : float (if average is not None) or array of float, shape =        [n_unique_labels]
 
-    support : int (if average is not None) or array of int, shape =\
-        [n_unique_labels]
+    support : int (if average is not None) or array of int, shape =        [n_unique_labels]
         The number of occurrences of each label in ``y_true``.
 
     References
@@ -164,9 +161,19 @@ def precision_recall_fscore_support(
 
     # ALTERATION: want to still validate average, labels, pos_label, but
     # requires y_true, y_pred, so passed in a mock version `[0]`
-    labels = sklearn.metrics._classification._check_set_wise_labels(
-        [0], [0], average, labels, pos_label
-    )
+    # Fast path: avoid validation if not necessary (profiled line dominates time)
+    if (
+        labels is None
+        and average in {None, "micro", "macro", "weighted"}
+        and pos_label == 1
+    ):
+        validated_labels = None
+    else:
+        # Only call sklearn validation if custom label handling is requested
+        validated_labels = sklearn.metrics._classification._check_set_wise_labels(
+            [0], [0], average, labels, pos_label
+        )
+    labels = validated_labels
 
     # ALTERATION: remove weighted as an option since we don't allow that for
     # passing in the MCM.
@@ -176,22 +183,35 @@ def precision_recall_fscore_support(
 
     # ALTERATION: Reduce MCM to only labels desired if not all desired.
     if labels is not None:
-        MCM = np.take(MCM, labels, axis=0)
+        # np.take is surprisingly slow for this use case; use slicing if possible
+        if (
+            isinstance(labels, np.ndarray)
+            and labels.dtype == np.intp
+            and np.all(labels == np.arange(labels[0], labels[0] + len(labels)))
+        ):
+            # If labels is an interval, slice directly
+            MCM = MCM[labels[0] : labels[0] + len(labels)]
+        else:
+            MCM = MCM[labels]
+    # Precompute repeated indices to help with cache locality
+    tp = MCM[:, 1, 1]
+    fp = MCM[:, 0, 1]
+    fn = MCM[:, 1, 0]
 
-    tp_sum = MCM[:, 1, 1]
-    pred_sum = tp_sum + MCM[:, 0, 1]
-    true_sum = tp_sum + MCM[:, 1, 0]
+    tp_sum = tp
+    pred_sum = tp + fp
+    true_sum = tp + fn
 
     if average == "micro":
-        tp_sum = np.array([tp_sum.sum()])
-        pred_sum = np.array([pred_sum.sum()])
-        true_sum = np.array([true_sum.sum()])
+        # Use np.add.reduce for single-pass summation (better for big arrays)
+        tp_sum = np.array([np.add.reduce(tp_sum, dtype=tp_sum.dtype)])
+        pred_sum = np.array([np.add.reduce(pred_sum, dtype=pred_sum.dtype)])
+        true_sum = np.array([np.add.reduce(true_sum, dtype=true_sum.dtype)])
 
     # Finally, we have all our sufficient statistics. Divide! #
-    beta2 = beta**2
+    beta2 = beta * beta
 
-    # Divide, and on zero-division, set scores to 0 and warn:
-
+    # _prf_divide is still a major contributor; but can't inline without breaking behavior
     precision = sklearn.metrics._classification._prf_divide(
         tp_sum, pred_sum, "precision", "predicted", average, warn_for
     )
@@ -201,13 +221,14 @@ def precision_recall_fscore_support(
     # Don't need to warn for F: either P or R warned, or tp == 0 where pos
     # and true are nonzero, in which case, F is well-defined and zero
     denom = beta2 * precision + recall
-    denom[denom == 0.0] = 1  # avoid division by 0
+    # Use np.putmask instead of boolean indexing for better write performance (for some dtypes)
+    np.putmask(denom, denom == 0.0, 1)
     f_score = (1 + beta2) * precision * recall / denom
 
     # Average the results
     if average == "weighted":
         weights = true_sum
-        if weights.sum() == 0:
+        if np.sum(weights) == 0:
             return np.array([0.0]), np.array([0.0]), np.array([0.0]), None
     elif average == "samples":
         weights = sample_weight
@@ -215,7 +236,9 @@ def precision_recall_fscore_support(
         weights = None
 
     if average is not None:
+        # This assert is ~noop but may generate small overhead for huge arrays.
         assert average != "binary" or len(precision) == 1
+        # Numpy's average is already efficient; no change
         precision = np.average(precision, weights=weights)
         recall = np.average(recall, weights=weights)
         f_score = np.average(f_score, weights=weights)
