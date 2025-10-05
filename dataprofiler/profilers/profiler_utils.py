@@ -488,18 +488,23 @@ def find_diff_of_lists_and_sets(
         pass
     elif stat1 is None or stat2 is None:
         return [stat1, stat2]
-    elif set(stat1) != set(stat2) or len(stat1) != len(stat2):
-        temp_stat1 = list(copy.deepcopy(stat1))
-        temp_stat2 = list(copy.deepcopy(stat2))
-        shared = []
-        for element in temp_stat1:
-            if element in temp_stat2:
-                shared.append(element)
-                temp_stat2.remove(element)
-        for element in shared:
-            temp_stat1.remove(element)
+    else:
+        set1 = set(stat1)
+        set2 = set(stat2)
+        if set1 != set2 or len(stat1) != len(stat2):
+            # Identify shared elements (preserve original order from stat1)
+            shared_set = set1 & set2
+            shared = [e for e in stat1 if e in shared_set]
 
-        return [temp_stat1, shared, temp_stat2]
+            # Identify unique elements (preserve original order from stat1)
+            unique_stat1_set = set1 - set2
+            temp_stat1 = [e for e in stat1 if e in unique_stat1_set]
+
+            # Identify unique elements (preserve original order from stat2)
+            unique_stat2_set = set2 - set1
+            temp_stat2 = [e for e in stat2 if e in unique_stat2_set]
+
+            return [temp_stat1, shared, temp_stat2]
 
     return "unchanged"
 
