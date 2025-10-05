@@ -1,4 +1,5 @@
 """Contains functions for data readers."""
+
 import json
 import logging
 import os
@@ -24,7 +25,6 @@ from typing import (
 
 import boto3
 import botocore
-import dateutil
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
@@ -35,6 +35,7 @@ from typing_extensions import TypeGuard
 from .. import dp_logging, rng_utils
 from .._typing import JSONType, Url
 from .filepath_or_buffer import FileOrBufferHandler, is_stream_buffer  # NOQA
+from dateutil.parser import parse as _parse
 
 logger = dp_logging.get_child_logger(__name__)
 
@@ -52,7 +53,7 @@ def data_generator(data_list: List[str]) -> Generator[str, None, None]:
 
 
 def generator_on_file(
-    file_object: Union[StringIO, BytesIO]
+    file_object: Union[StringIO, BytesIO],
 ) -> Generator[Union[str, bytes], None, None]:
     """
     Take a file and return a generator that returns lines.
@@ -683,30 +684,29 @@ def detect_cell_type(cell: str) -> str:
     :param cell: String designated for data type detection
     :type cell: str
     """
-    cell_type = "str"
     if len(cell) == 0:
-        cell_type = "none"
-    else:
+        return "none"
 
-        try:
-            # need to ingore type bc https://github.com/python/mypy/issues/8878
-            if dateutil.parser.parse(cell, fuzzy=False):  # type:ignore
-                cell_type = "date"
-        except (ValueError, OverflowError, TypeError):
-            pass
+    if cell.isupper():
+        return "upstr"
 
+    try:
+        int(cell)
+        return "int"
+    except ValueError:
         try:
             f_cell = float(cell)
-            cell_type = "float"
             if f_cell.is_integer():
-                cell_type = "int"
+                return "int"
+            return "float"
         except ValueError:
-            pass
+            try:
+                if _parse(cell, fuzzy=False):  # type:ignore
+                    return "date"
+            except (ValueError, OverflowError, TypeError):
+                pass
 
-        if cell.isupper():
-            cell_type = "upstr"
-
-    return cell_type
+    return "str"
 
 
 def get_delimiter_regex(delimiter: str = ",", quotechar: str = ",") -> Pattern[str]:
