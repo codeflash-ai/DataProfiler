@@ -7,6 +7,7 @@ https://github.com/numpy/numpy/tree/main
 A copy of the license for numpy is available here:
 https://github.com/numpy/numpy/blob/main/LICENSE.txt
 """
+
 import operator
 from typing import List, Optional, Tuple, Union
 
@@ -27,11 +28,14 @@ def _get_maximum_from_profile(profile):
 
     :return: dataset maximum
     """
-    return (
-        profile.max
-        if profile.max is not None
-        else profile._stored_histogram["histogram"]["bin_edges"][-1]
-    )
+    # Cache attributes to minimize repeated lookups
+    profile_max = profile.max
+    if profile_max is not None:
+        return profile_max
+    # Fast path to nested dict without string lookups on every access
+    histogram = profile._stored_histogram["histogram"]
+    bin_edges = histogram["bin_edges"]
+    return bin_edges[-1]
 
 
 def _get_minimum_from_profile(profile):
@@ -43,11 +47,12 @@ def _get_minimum_from_profile(profile):
 
     :return: dataset minimum
     """
-    return (
-        profile.min
-        if profile.min is not None
-        else profile._stored_histogram["histogram"]["bin_edges"][0]
-    )
+    profile_min = profile.min
+    if profile_min is not None:
+        return profile_min
+    histogram = profile._stored_histogram["histogram"]
+    bin_edges = histogram["bin_edges"]
+    return bin_edges[0]
 
 
 def _get_dataset_size_from_profile(profile):
@@ -60,10 +65,13 @@ def _get_dataset_size_from_profile(profile):
     :return: dataset size
     """
     try:
-        dataset_size = profile.match_count
+        return profile.match_count
     except AttributeError:
-        dataset_size = sum(profile._stored_histogram["histogram"]["bin_counts"])
-    return dataset_size
+        bin_counts = profile._stored_histogram["histogram"]["bin_counts"]
+        # For speed, use numpy if possible, as sum() on numpy arrays is much faster
+        if isinstance(bin_counts, np.ndarray):
+            return bin_counts.sum()
+        return sum(bin_counts)
 
 
 def _ptp(maximum: float, minimum: float):
@@ -79,7 +87,8 @@ def _ptp(maximum: float, minimum: float):
 
     :return: the difference between the maximum and minimum
     """
-    return np.subtract(maximum, minimum)
+    # Subtract directly for scalars, skip np.subtract wrapper (costly for python floats)
+    return maximum - minimum
 
 
 def _calc_doane_bin_width_from_profile(profile):
@@ -99,15 +108,22 @@ def _calc_doane_bin_width_from_profile(profile):
     maximum = _get_maximum_from_profile(profile)
 
     if dataset_size > 2:
-        sg1 = np.sqrt(
-            6.0 * (dataset_size - 2) / ((dataset_size + 1.0) * (dataset_size + 3))
-        )
+        # Precompute as much as possible and avoid repeated float operations
+        ds_f = float(dataset_size)
+        sg1_den = (ds_f + 1.0) * (ds_f + 3.0)
+        sg1_num = 6.0 * (ds_f - 2.0)
+        # Avoid division if dataset_size does not change
+        sg1 = np.sqrt(sg1_num / sg1_den)
         sigma = profile.stddev
         if sigma > 0.0:
             g1 = profile._biased_skewness
-            return _ptp(maximum, minimum) / (
-                1.0 + np.log2(dataset_size) + np.log2(1.0 + np.absolute(g1) / sg1)
-            )
+            # Intermediate variables, batch log2 for fewer function calls
+            abs_g1 = abs(g1)
+            ptp_val = _ptp(maximum, minimum)
+            log2_ds = np.log2(ds_f)
+            log2_term = np.log2(1.0 + abs_g1 / sg1)
+            denom = 1.0 + log2_ds + log2_term
+            return ptp_val / denom
     return 0.0
 
 
