@@ -1,4 +1,5 @@
 """Contains class for for profiling data labeler col."""
+
 from __future__ import annotations
 
 import operator
@@ -31,7 +32,7 @@ class DataLabelerColumn(BaseColumnProfiler["DataLabelerColumn"]):
         BaseColumnProfiler.__init__(self, name)
 
         self._max_sample_size = 1000
-        if options:
+        if options is not None:
             if not isinstance(options, DataLabelerOptions):
                 raise ValueError(
                     "DataLabelerColumn parameter 'options' must be"
@@ -41,11 +42,11 @@ class DataLabelerColumn(BaseColumnProfiler["DataLabelerColumn"]):
                 self._max_sample_size = options.max_sample_size
 
         self.data_labeler: BaseDataLabeler = None  # type: ignore[assignment]
-        if options and options.data_labeler_object:
+        if options is not None and options.data_labeler_object:
             self.data_labeler = options.data_labeler_object
         if self.data_labeler is None:
             data_labeler_dirpath = None
-            if options:
+            if options is not None:
                 data_labeler_dirpath = options.data_labeler_dirpath
 
             self.data_labeler = DataLabeler(
@@ -411,30 +412,53 @@ class DataLabelerColumn(BaseColumnProfiler["DataLabelerColumn"]):
         :type df_series: pandas.DataFrame
         :return: None
         """
-        predictions = self.data_labeler.predict(
+        # If there are no calculations to perform, exit early for a possibly large dataset
+        if not self.__calculations:
+            return
+
+        data_labeler = self.data_labeler
+        data_labeler_model = data_labeler.model
+        requires_zero_mapping = getattr(
+            data_labeler_model, "requires_zero_mapping", False
+        )
+
+        predictions = data_labeler.predict(
             df_series, predict_options=dict(show_confidences=True)
         )
+
+        conf = predictions["conf"]
         # remove PAD from output (reserved zero index)
-        if self.data_labeler.model.requires_zero_mapping:
+        if requires_zero_mapping:
             ignore_value = 0  # PAD index
-            predictions["conf"] = np.delete(predictions["conf"], ignore_value, axis=1)
-        sum_predictions = np.sum(predictions["conf"], axis=0)
+            conf = np.delete(conf, ignore_value, axis=1)
+        sum_predictions = np.sum(conf, axis=0)
         self.sum_predictions += sum_predictions
 
-        rank_predictions = np.argpartition(
-            predictions["conf"], axis=1, kth=-self._top_k_voting
-        )
-        start_index = 0
-        if self.data_labeler.model.requires_zero_mapping:
-            start_index = 1
+        top_k_voting = self._top_k_voting
+        min_voting_prob = self._min_voting_prob
+
+        rank_predictions = np.argpartition(conf, axis=1, kth=-top_k_voting)
+        start_index = 1 if requires_zero_mapping else 0
+
+        # Cache attribute/property lookups
+        reverse_label_mapping = self.reverse_label_mapping
+        rank_distribution = self.rank_distribution
+
+        # Batch up distribution increments for faster update
+        counts: dict[str, int] = {}
+
         for i in range(rank_predictions.shape[0]):
-            sorted_rank = rank_predictions[i][-self._top_k_voting :]
-            sorted_rank = sorted_rank[np.argsort(predictions["conf"][i][sorted_rank])]
+            sorted_rank = rank_predictions[i][-top_k_voting:]
+            # Get the sorted order within top-k
+            sorted_rank = sorted_rank[np.argsort(conf[i][sorted_rank])]
             for rank_position, value in enumerate(sorted_rank):
-                if predictions["conf"][i][value] > self._min_voting_prob:
-                    self.rank_distribution[
-                        self.reverse_label_mapping[value + start_index]
-                    ] += (rank_position + 1)
+                conf_val = conf[i][value]
+                if conf_val > min_voting_prob:
+                    label = reverse_label_mapping[value + start_index]
+                    counts[label] = counts.get(label, 0) + (rank_position + 1)
+        # Update rank_distribution in batch if any updates
+        for label, count in counts.items():
+            rank_distribution[label] += count
 
     def _update_helper(self, df_series_clean: Series, profile: dict) -> None:
         """
@@ -461,19 +485,25 @@ class DataLabelerColumn(BaseColumnProfiler["DataLabelerColumn"]):
             return self
 
         sample_size = min(len(df_series), self._max_sample_size)
-        df_series = df_series.sample(sample_size)
+        if sample_size == len(df_series):
+            # avoid .sample() overhead if we don't need randomization and just want the full slice
+            sampled_series = df_series.head(sample_size)
+        else:
+            sampled_series = df_series.sample(n=sample_size, replace=False)
 
         profile = dict(sample_size=sample_size)
         self._update_predictions(
-            df_series=df_series, prev_dependent_properties={}, subset_properties=profile
+            df_series=sampled_series,
+            prev_dependent_properties={},
+            subset_properties=profile,
         )
         BaseColumnProfiler._perform_property_calcs(
             self,
             self.__calculations,
-            df_series=df_series,
+            df_series=sampled_series,
             prev_dependent_properties={},
             subset_properties=profile,
         )
-        self._update_helper(df_series, profile)
+        self._update_helper(sampled_series, profile)
 
         return self
