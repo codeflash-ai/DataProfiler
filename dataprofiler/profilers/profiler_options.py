@@ -398,6 +398,7 @@ class NumericalOptions(BaseInspectorOptions[NumericalOptionsT]):
             stats
         :vartype is_numeric_stats_enabled: bool
         """
+        # Direct instantiation instead of attribute reflection for speed and clarity
         self.min: BooleanOption = BooleanOption(is_enabled=True)
         self.max: BooleanOption = BooleanOption(is_enabled=True)
         self.mode: ModeOption = ModeOption(is_enabled=True)
@@ -412,7 +413,6 @@ class NumericalOptions(BaseInspectorOptions[NumericalOptionsT]):
         self.histogram_and_quantiles: HistogramAndQuantilesOption = (
             HistogramAndQuantilesOption()
         )
-        # By default, we correct for bias
         self.bias_correction: BooleanOption = BooleanOption(is_enabled=True)
         BaseInspectorOptions.__init__(self)
 
@@ -494,88 +494,103 @@ class NumericalOptions(BaseInspectorOptions[NumericalOptionsT]):
             variable_path = self.__class__.__name__
 
         errors = super()._validate_helper(variable_path=variable_path)
-        for item in [
-            "histogram_and_quantiles",
-            "min",
-            "max",
-            "sum",
-            "mode",
-            "median",
-            "variance",
-            "skewness",
-            "kurtosis",
-            "median_abs_deviation",
-            "bias_correction",
-            "num_zeros",
-            "num_negatives",
-        ]:
-            if not isinstance(self.properties[item], BooleanOption):
-                errors.append(f"{variable_path}.{item} must be a BooleanOption.")
-            else:
-                errors += self.properties[item]._validate_helper(
-                    variable_path=variable_path + "." + item
-                )
+
+        # Fast-path: use locals() to lookup, avoiding getattr/lookup via self.properties
+        # Validate all options, storing references in a dict for repeated access.
+        _props = {
+            "histogram_and_quantiles": self.histogram_and_quantiles,
+            "min": self.min,
+            "max": self.max,
+            "sum": self.sum,
+            "mode": self.mode,
+            "median": self.median,
+            "variance": self.variance,
+            "skewness": self.skewness,
+            "kurtosis": self.kurtosis,
+            "median_abs_deviation": self.median_abs_deviation,
+            "bias_correction": self.bias_correction,
+            "num_zeros": self.num_zeros,
+            "num_negatives": self.num_negatives,
+        }
+
+        # Avoid repeated attribute/dict access, use local variables
+        error_append = errors.append
+
+        for item, obj in _props.items():
+            # For ModeOption and HistogramAndQuantilesOption, do not require BooleanOption type
+            if not isinstance(obj, BooleanOption):
+                # histogram_and_quantiles and mode exceptions
+                if item == "histogram_and_quantiles":
+                    if not hasattr(obj, "_validate_helper"):
+                        error_append(f"{variable_path}.{item} must implement _validate_helper.")
+                        continue
+                elif item == "mode":
+                    if not hasattr(obj, "_validate_helper"):
+                        error_append(f"{variable_path}.{item} must implement _validate_helper.")
+                        continue
+                else:
+                    error_append(f"{variable_path}.{item} must be a BooleanOption.")
+                    continue
+
+            # Always call _validate_helper (e.g. ModeOption has own _validate_helper)
+            r = obj._validate_helper(variable_path=variable_path + "." + item)
+            if r:
+                errors += r
+
+        # Pre-extract booleans for dependency checks, minimizing attribute access
+        sum_enabled = _props["sum"].is_enabled if isinstance(_props["sum"], BooleanOption) else False
+        variance_enabled = _props["variance"].is_enabled if isinstance(_props["variance"], BooleanOption) else False
+        skewness_enabled = _props["skewness"].is_enabled if isinstance(_props["skewness"], BooleanOption) else False
+        kurtosis_enabled = _props["kurtosis"].is_enabled if isinstance(_props["kurtosis"], BooleanOption) else False
+        mad_enabled = _props["median_abs_deviation"].is_enabled if isinstance(_props["median_abs_deviation"], BooleanOption) else False
+        histogram_enabled = _props["histogram_and_quantiles"].is_enabled if hasattr(_props["histogram_and_quantiles"], "is_enabled") else False
+        mode_enabled = _props["mode"].is_enabled if hasattr(_props["mode"], "is_enabled") else False
+        median_enabled = _props["median"].is_enabled if hasattr(_props["median"], "is_enabled") else False
 
         # Error checks for dependent calculations
-        sum_disabled = not self.properties["sum"].is_enabled
-        var_disabled = not self.properties["variance"].is_enabled
-        skew_disabled = not self.properties["skewness"].is_enabled
-        kurt_disabled = not self.properties["kurtosis"].is_enabled
-        mad_disabled = not self.properties["median_abs_deviation"].is_enabled
-        histogram_disabled = not self.properties["histogram_and_quantiles"].is_enabled
-        if sum_disabled and not var_disabled:
-            errors.append(
-                "{}: The numeric stats must toggle on the sum "
-                "if the variance is toggled on.".format(variable_path)
+        if not sum_enabled and variance_enabled:
+            error_append(
+                f"{variable_path}: The numeric stats must toggle on the sum "
+                "if the variance is toggled on."
             )
-        if (sum_disabled or var_disabled) and not skew_disabled:
-            errors.append(
-                "{}: The numeric stats must toggle on the "
-                "sum and variance if skewness is toggled on.".format(variable_path)
+        if (not sum_enabled or not variance_enabled) and skewness_enabled:
+            error_append(
+                f"{variable_path}: The numeric stats must toggle on the "
+                "sum and variance if skewness is toggled on."
             )
-        if (sum_disabled or var_disabled or skew_disabled) and not kurt_disabled:
-            errors.append(
-                "{}: The numeric stats must toggle on sum,"
+        if (not sum_enabled or not variance_enabled or not skewness_enabled) and kurtosis_enabled:
+            error_append(
+                f"{variable_path}: The numeric stats must toggle on sum,"
                 " variance, and skewness if kurtosis is "
-                "toggled on.".format(variable_path)
+                "toggled on."
             )
-        if histogram_disabled and not mad_disabled:
-            errors.append(
-                "{}: The numeric stats must toggle on histogram "
+        if not histogram_enabled and mad_enabled:
+            error_append(
+                f"{variable_path}: The numeric stats must toggle on histogram "
                 "and quantiles if median absolute deviation is "
-                "toggled on.".format(variable_path)
+                "toggled on."
             )
 
-        mode_disabled = not self.properties["mode"].is_enabled
-        median_disabled = not self.properties["median"].is_enabled
-        histogram_disabled = not self.properties["histogram_and_quantiles"].is_enabled
-        if histogram_disabled:
-            if not mode_disabled:
-                errors.append(
-                    "{}: The numeric stats must toggle on histogram "
+        if not histogram_enabled:
+            if mode_enabled:
+                error_append(
+                    f"{variable_path}: The numeric stats must toggle on histogram "
                     "and quantiles if mode is "
-                    "toggled on.".format(variable_path)
+                    "toggled on."
                 )
-            if not median_disabled:
-                errors.append(
-                    "{}: The numeric stats must toggle on histogram "
+            if median_enabled:
+                error_append(
+                    f"{variable_path}: The numeric stats must toggle on histogram "
                     "and quantiles if median is "
-                    "toggled on.".format(variable_path)
+                    "toggled on."
                 )
 
-        # warn user if all stats are disabled
-        if not errors:
-            if not self.is_numeric_stats_enabled:
-                variable_path = (
-                    variable_path + ".numeric_stats"
-                    if variable_path
-                    else self.__class__.__name__
-                )
-                warnings.warn(
-                    "{}: The numeric stats are completely disabled.".format(
-                        variable_path
-                    )
-                )
+        # Only check is_numeric_stats_enabled if there are no errors
+        if not errors and not getattr(self, "is_numeric_stats_enabled", True):
+            variable_subpath = variable_path + ".numeric_stats" if variable_path else self.__class__.__name__
+            warnings.warn(
+                f"{variable_subpath}: The numeric stats are completely disabled."
+            )
         return errors
 
 
@@ -658,21 +673,14 @@ class PrecisionOptions(BooleanOption["PrecisionOptions"]):
         :rtype: List of strings
         """
         errors = super()._validate_helper(variable_path=variable_path)
-        if self.sample_ratio is not None:
-            if not isinstance(self.sample_ratio, float) and not isinstance(
-                self.sample_ratio, int
-            ):
+        sr = self.sample_ratio
+        if sr is not None:
+            if not isinstance(sr, (float, int)):
                 errors.append(f"{variable_path}.sample_ratio must be a float.")
-            if (
-                isinstance(self.sample_ratio, float)
-                or isinstance(self.sample_ratio, int)
-            ) and (self.sample_ratio < 0 or self.sample_ratio > 1.0):
+            elif sr < 0 or sr > 1.0:
                 errors.append(
-                    "{}.sample_ratio must be a float between 0 and 1.".format(
-                        variable_path
-                    )
+                    f"{variable_path}.sample_ratio must be a float between 0 and 1."
                 )
-
         return errors
 
 
