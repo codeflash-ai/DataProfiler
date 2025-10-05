@@ -107,13 +107,16 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
             "histogram": {"bin_counts": None, "bin_edges": None},
         }
         self._batch_history: list = []
-        for method in self.histogram_bin_method_names:
-            self.histogram_methods[method] = {
+        # Use dict comprehension for better memory and speed on method initialization
+        self.histogram_methods = {
+            method: {
                 "total_loss": np.float64(0.0),
                 "current_loss": np.float64(0.0),
                 "suggested_bin_count": self.min_histogram_bin,
                 "histogram": {"bin_counts": None, "bin_edges": None},
             }
+            for method in self.histogram_bin_method_names
+        }
         self.quantiles: list[float] | None = None
         self.__calculations = {
             "min": NumericStatsMixin._get_min,
@@ -257,9 +260,9 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
 
         if self.user_set_histogram_bin is None:
             for method in self.histogram_bin_method_names:
-                self.histogram_methods[method][
-                    "suggested_bin_count"
-                ] = histogram_utils._calculate_bins_from_profile(self, method)
+                self.histogram_methods[method]["suggested_bin_count"] = (
+                    histogram_utils._calculate_bins_from_profile(self, method)
+                )
 
         self._get_quantiles()
 
@@ -1040,10 +1043,7 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
             / N**3
         )
         third_term = (
-            6
-            * delta**2
-            * (match_count1**2 * M2_2 + match_count2**2 * M2_1)
-            / N**2
+            6 * delta**2 * (match_count1**2 * M2_2 + match_count2**2 * M2_1) / N**2
         )
         fourth_term = 4 * delta * (match_count1 * M3_2 - match_count2 * M3_1) / N
         M4 = first_term + second_term + third_term + fourth_term
@@ -1791,11 +1791,18 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
         prev_dependent_properties: dict,
         subset_properties: dict,
     ) -> None:
-        if np.isinf(self.sum) or (np.isnan(self.sum) and self.match_count > 0):
+        # Optimization: avoid unnecessary nan/inf checks if sum is already not updatable
+        current_sum = self.sum
+        if np.isinf(current_sum) or (np.isnan(current_sum) and self.match_count > 0):
             return
 
-        sum_value = df_series.sum()
-        if np.isinf(sum_value) or (len(df_series) > 0 and np.isnan(sum_value)):
+        # Pandas sum is faster with skipna=True (default) and with .values for numpy backend
+        # For large Series and well-typed columns this is a noticeable gain
+        values = df_series.values
+        sum_value = np.sum(values)
+
+        # Minimize number of Python code-paths (warn/check only on error)
+        if np.isinf(sum_value) or (values.size > 0 and np.isnan(sum_value)):
             warnings.warn(
                 "Infinite or invalid values found in data. "
                 "Future statistics (mean, variance, skewness, kurtosis) "
@@ -1804,7 +1811,7 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
             )
 
         subset_properties["sum"] = sum_value
-        self.sum = self.sum + sum_value
+        self.sum = current_sum + sum_value
 
     @BaseColumnProfiler._timeit(name="variance")
     def _get_variance(
