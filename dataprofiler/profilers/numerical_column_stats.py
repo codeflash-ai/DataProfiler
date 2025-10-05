@@ -257,9 +257,9 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
 
         if self.user_set_histogram_bin is None:
             for method in self.histogram_bin_method_names:
-                self.histogram_methods[method][
-                    "suggested_bin_count"
-                ] = histogram_utils._calculate_bins_from_profile(self, method)
+                self.histogram_methods[method]["suggested_bin_count"] = (
+                    histogram_utils._calculate_bins_from_profile(self, method)
+                )
 
         self._get_quantiles()
 
@@ -1040,10 +1040,7 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
             / N**3
         )
         third_term = (
-            6
-            * delta**2
-            * (match_count1**2 * M2_2 + match_count2**2 * M2_1)
-            / N**2
+            6 * delta**2 * (match_count1**2 * M2_2 + match_count2**2 * M2_1) / N**2
         )
         fourth_term = 4 * delta * (match_count1 * M3_2 - match_count2 * M3_1) / N
         M4 = first_term + second_term + third_term + fourth_term
@@ -1063,7 +1060,7 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
         :return: unbiased estimator of kurtosis
         :rtype: NaN if sample size is too small, float otherwise
         """
-        if np.isnan(biased_kurtosis) or match_count < 4:
+        if (biased_kurtosis != biased_kurtosis) or match_count < 4:
             warnings.warn(
                 "Insufficient match count to correct bias in kurtosis. Bias correction "
                 "can be manually disabled by setting bias_correction.is_enabled to "
@@ -1072,11 +1069,14 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
             )
             return np.nan
 
-        kurtosis = (
-            (match_count - 1)
-            / ((match_count - 2) * (match_count - 3))
-            * ((match_count + 1) * (biased_kurtosis + 3) - 3 * (match_count - 1))
-        )
+        m1 = match_count - 1
+        m2 = match_count - 2
+        m3 = match_count - 3
+        mp1 = match_count + 1
+
+        numerator = m1 * (mp1 * (biased_kurtosis + 3) - 3 * m1)
+        denominator = m2 * m3
+        kurtosis = numerator / denominator
         return kurtosis
 
     def _estimate_mode_from_histogram(self) -> list[float]:
