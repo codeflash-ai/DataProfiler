@@ -1,4 +1,5 @@
 """Contains class for saving and loading spreadsheet data."""
+
 from io import BytesIO, StringIO
 from typing import Any, Dict, List, Optional, Union
 
@@ -186,6 +187,9 @@ class AVROData(JSONData, BaseData):
         :type schema_avro: avro schema
         :return : updated avro schema
         """
+        schema_fields_append = schema_avro["fields"].append
+        string_null_type = ["string", "null"]
+
         for key, value in nested_keys.items():
             if type(value) is dict:
                 # here, the null option to specify keys not required
@@ -197,8 +201,8 @@ class AVROData(JSONData, BaseData):
                 schema_avro_temp["type"][0] = cls._get_schema_avro(
                     value, schema_avro_temp["type"][0]
                 )
-                schema_avro["fields"].append(schema_avro_temp)
+                schema_fields_append(schema_avro_temp)
             else:
-                schema_avro["fields"].append({"name": key, "type": ["string", "null"]})
+                schema_fields_append({"name": key, "type": string_null_type})
 
         return schema_avro
