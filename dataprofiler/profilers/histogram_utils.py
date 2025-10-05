@@ -7,6 +7,7 @@ https://github.com/numpy/numpy/tree/main
 A copy of the license for numpy is available here:
 https://github.com/numpy/numpy/blob/main/LICENSE.txt
 """
+
 import operator
 from typing import List, Optional, Tuple, Union
 
@@ -27,11 +28,13 @@ def _get_maximum_from_profile(profile):
 
     :return: dataset maximum
     """
-    return (
-        profile.max
-        if profile.max is not None
-        else profile._stored_histogram["histogram"]["bin_edges"][-1]
-    )
+    # Cache local to avoid multiple dict lookups
+    max_ = profile.max
+    if max_ is not None:
+        return max_
+    # Micro-optimization: bind once, access once
+    hist = profile._stored_histogram["histogram"]
+    return hist["bin_edges"][-1]
 
 
 def _get_minimum_from_profile(profile):
@@ -43,11 +46,11 @@ def _get_minimum_from_profile(profile):
 
     :return: dataset minimum
     """
-    return (
-        profile.min
-        if profile.min is not None
-        else profile._stored_histogram["histogram"]["bin_edges"][0]
-    )
+    min_ = profile.min
+    if min_ is not None:
+        return min_
+    hist = profile._stored_histogram["histogram"]
+    return hist["bin_edges"][0]
 
 
 def _get_dataset_size_from_profile(profile):
@@ -59,11 +62,13 @@ def _get_dataset_size_from_profile(profile):
 
     :return: dataset size
     """
+    # Micro: exception-cost is negligible vs large data
     try:
-        dataset_size = profile.match_count
+        return profile.match_count
     except AttributeError:
-        dataset_size = sum(profile._stored_histogram["histogram"]["bin_counts"])
-    return dataset_size
+        # Avoid multiple lookups
+        bins = profile._stored_histogram["histogram"]["bin_counts"]
+        return sum(bins)
 
 
 def _ptp(maximum: float, minimum: float):
@@ -79,7 +84,8 @@ def _ptp(maximum: float, minimum: float):
 
     :return: the difference between the maximum and minimum
     """
-    return np.subtract(maximum, minimum)
+    # Use Python subtraction unless values are numpy/scalar arrays; np.subtract invokes type conversion overhead.
+    return maximum - minimum
 
 
 def _calc_doane_bin_width_from_profile(profile):
@@ -327,24 +333,22 @@ def _calculate_bins_from_profile(profile, bin_method):
 
     :return: ideal number of bins for a particular histogram calcuation method
     """
-    # if `bins` is a string for an automatic method,
-    # this will replace it with the number of bins calculated
-    if bin_method not in _hist_bin_width_selectors_for_profile:
+    selectors = _hist_bin_width_selectors_for_profile
+    if bin_method not in selectors:
         raise ValueError(f"{bin_method!r} is not a valid estimator for `bins`")
 
+    # Compute once, cache values
     dataset_size = _get_dataset_size_from_profile(profile)
+    if dataset_size == 0:
+        return 1
+
     minimum = _get_minimum_from_profile(profile)
     maximum = _get_maximum_from_profile(profile)
 
-    if dataset_size == 0:
-        n_equal_bins = 1
+    width = selectors[bin_method](profile)
+    if width and not np.isnan(width):
+        # _ptp uses Python subtraction (optimization)
+        n_equal_bins = int(np.ceil(_ptp(maximum, minimum) / width))
     else:
-        # Do not call selectors on empty arrays
-        width = _hist_bin_width_selectors_for_profile[bin_method](profile)
-        if width and not np.isnan(width):
-            n_equal_bins = int(np.ceil(_ptp(maximum, minimum) / width))
-        else:
-            # Width can be zero for some estimators, e.g. FD when
-            # the IQR of the data is zero.
-            n_equal_bins = 1
+        n_equal_bins = 1
     return n_equal_bins
