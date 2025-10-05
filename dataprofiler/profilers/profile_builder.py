@@ -122,9 +122,19 @@ class StructuredColProfiler:
                 )
 
         if df_series is not None and len(df_series) > 0:
+            # Avoid an extraneous call to len(df_series) inside _get_sample_size
+            local_len = len(df_series)
             if not sample_size:
-                sample_size = self._get_sample_size(df_series)
-            if sample_size < len(df_series):
+                if local_len <= self._min_sample_size:
+                    sample_size = local_len
+                else:
+                    # Avoid an extra int cast if possible
+                    calc_size = self._sampling_ratio * local_len
+                    if calc_size > self._min_sample_size:
+                        sample_size = int(calc_size)
+                    else:
+                        sample_size = self._min_sample_size
+            if sample_size < local_len:
                 warnings.warn(
                     "The data will be profiled with a sample size of {}. "
                     "All statistics will be based on this subsample and "
@@ -525,10 +535,16 @@ class StructuredColProfiler:
         :return: integer sampling size
         :rtype: int
         """
+        # Move len() to local for slight speed up and avoid recomputation.
         len_df = len(df_series)
+        # Avoid unnecessary int cast if under threshold.
         if len_df <= self._min_sample_size:
-            return int(len_df)
-        return max(int(self._sampling_ratio * len_df), self._min_sample_size)
+            return len_df
+        calc_size = self._sampling_ratio * len_df
+        if calc_size > self._min_sample_size:
+            return int(calc_size)
+        # Only cast once.
+        return self._min_sample_size
 
     # TODO: flag column name with null values and potentially return row
     #  index number in the error as well
@@ -1919,10 +1935,10 @@ class StructuredProfiler(BaseProfiler):
             col_name = other_profile._profile[i].name
             other_profile_schema[col_name].append(i)
 
-        report["global_stats"][
-            "profile_schema"
-        ] = profiler_utils.find_diff_of_dicts_with_diff_keys(
-            self_profile_schema, other_profile_schema
+        report["global_stats"]["profile_schema"] = (
+            profiler_utils.find_diff_of_dicts_with_diff_keys(
+                self_profile_schema, other_profile_schema
+            )
         )
 
         # Only find the diff of columns if the schemas are exactly the same
@@ -2101,9 +2117,9 @@ class StructuredProfiler(BaseProfiler):
                 self.options.null_replication_metrics.is_enabled
                 and i in self._null_replication_metrics
             ):
-                report["data_stats"][i][
-                    "null_replication_metrics"
-                ] = self._null_replication_metrics[i]
+                report["data_stats"][i]["null_replication_metrics"] = (
+                    self._null_replication_metrics[i]
+                )
 
         return _prepare_report(report, output_format, omit_keys)
 
@@ -2610,9 +2626,11 @@ class StructuredProfiler(BaseProfiler):
 
         total_row_sum = np.asarray(
             [
-                get_data_type_profiler(profile).sum
-                if get_data_type(profile) not in [None, "datetime"]
-                else np.nan
+                (
+                    get_data_type_profiler(profile).sum
+                    if get_data_type(profile) not in [None, "datetime"]
+                    else np.nan
+                )
                 for profile in self._profile
             ]
         )
@@ -2704,17 +2722,21 @@ class StructuredProfiler(BaseProfiler):
 
         self_row_sum = np.asarray(
             [
-                get_data_type_profiler(profile).sum
-                if get_data_type(profile)
-                else np.nan
+                (
+                    get_data_type_profiler(profile).sum
+                    if get_data_type(profile)
+                    else np.nan
+                )
                 for profile in self._profile
             ]
         )
         other_row_sum = np.asarray(
             [
-                get_data_type_profiler(profile).sum
-                if get_data_type(profile)
-                else np.nan
+                (
+                    get_data_type_profiler(profile).sum
+                    if get_data_type(profile)
+                    else np.nan
+                )
                 for profile in other._profile
             ]
         )
