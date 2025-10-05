@@ -1,4 +1,5 @@
 """Contains class for saving and loading spreadsheet data."""
+
 from io import BytesIO, StringIO
 from typing import Any, Dict, List, Optional, Union
 
@@ -87,17 +88,15 @@ class AVROData(JSONData, BaseData):
         :return: is file a avro file or not
         :rtype: bool
         """
-        if options is None:
-            options = dict()
+        options = options or {}
 
-        # get current position of stream
-        if data_utils.is_stream_buffer(file_path):
+        is_stream = data_utils.is_stream_buffer(file_path)
+        if is_stream:
             starting_location = file_path.tell()
 
         is_valid_avro: bool = fastavro.is_avro(file_path)
 
-        # return to original position in stream
-        if data_utils.is_stream_buffer(file_path):
+        if is_stream:
             file_path.seek(starting_location, 0)
 
         return is_valid_avro
