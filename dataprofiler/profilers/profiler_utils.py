@@ -1,4 +1,5 @@
 """Contains functions for profilers."""
+
 from __future__ import annotations
 
 import collections
@@ -373,15 +374,17 @@ def biased_kurt(df_series: Series) -> np.float64:
     if n < 1:
         return np.float64(np.nan)
 
-    mean = sum(df_series) / n
+    # Convert to numpy array once for vectorized operations (improves runtime and memory use)
+    values = df_series.values if hasattr(df_series, "values") else np.asarray(df_series)
+    mean = np.mean(values)
     if np.isinf(mean) or np.isnan(mean):
         return np.float64(np.nan)
 
-    diffs = df_series - mean
-    squared_diffs = diffs**2
+    diffs = values - mean
+    squared_diffs = diffs * diffs
     fourth_diffs = squared_diffs * squared_diffs
-    M2 = sum(squared_diffs)
-    M4 = sum(fourth_diffs)
+    M2 = squared_diffs.sum()
+    M4 = fourth_diffs.sum()
     # This correction comes from the pandas implementation of
     # kurtosis, which zeroes these values out before computation
     # due to possible floating point errors that can occur.
@@ -417,13 +420,11 @@ T = TypeVar("T", bound=Subtractable)
 def find_diff_of_numbers(
     stat1: int | float | np.float64 | np.int64 | None,
     stat2: int | float | np.float64 | np.int64 | None,
-) -> Any:
-    ...
+) -> Any: ...
 
 
 @overload
-def find_diff_of_numbers(stat1: T | None, stat2: T | None) -> Any:
-    ...
+def find_diff_of_numbers(stat1: T | None, stat2: T | None) -> Any: ...
 
 
 def find_diff_of_numbers(stat1, stat2):
