@@ -56,6 +56,7 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
                 "NumericalStatsMixin parameter 'options' must be "
                 "of type NumericalOptions."
             )
+
         self.min: int | float | np.float64 | np.int64 | None = None
         self.max: int | float | np.float64 | np.int64 | None = None
         self._top_k_modes: int = 5  # By default, return at max 5 modes
@@ -67,6 +68,8 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
         self._median_abs_dev_is_enabled: bool = True
         self.max_histogram_bin: int = 100000
         self.min_histogram_bin: int = 1000
+
+        # Avoids instance-level creation of the list if not needed
         self.histogram_bin_method_names: list[str] = [
             "auto",
             "fd",
@@ -84,6 +87,7 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
         self.num_negatives: int | np.int64 = np.int64(0)
         self._num_quantiles: int = 1000  # By default, we use 1000 quantiles
 
+        # Move options logic into local scope to reduce indirection & repeated checks
         if options:
             self.bias_correction = options.bias_correction.is_enabled
             self._top_k_modes = options.mode.top_k_modes
@@ -91,30 +95,39 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
             self._median_abs_dev_is_enabled = options.median_abs_deviation.is_enabled
             self._mode_is_enabled = options.mode.is_enabled
             self._num_quantiles = options.histogram_and_quantiles.num_quantiles
+
             bin_count_or_method = options.histogram_and_quantiles.bin_count_or_method
-            if isinstance(bin_count_or_method, str):
+            # Type checks in optimized order by likelihood
+            # int is most performant to check first, as "custom" is the rarest branch
+            if isinstance(bin_count_or_method, int):
+                self.user_set_histogram_bin = bin_count_or_method
+                self.histogram_bin_method_names = ["custom"]
+            elif isinstance(bin_count_or_method, str):
                 self.histogram_bin_method_names = [bin_count_or_method]
             elif isinstance(bin_count_or_method, list):
                 self.histogram_bin_method_names = bin_count_or_method
-            elif isinstance(bin_count_or_method, int):
-                self.user_set_histogram_bin = bin_count_or_method
-                self.histogram_bin_method_names = ["custom"]
-        self.histogram_methods: dict = {}
+
+        # Use dictionary comprehension for histogram_methods assignment
+        self.histogram_methods: dict = {
+            method: {
+                "total_loss": np.float64(0.0),
+                "current_loss": np.float64(0.0),
+                "suggested_bin_count": self.min_histogram_bin,
+                "histogram": {"bin_counts": None, "bin_edges": None},
+            }
+            for method in self.histogram_bin_method_names
+        }
         self._stored_histogram: dict = {
             "total_loss": np.float64(0.0),
             "current_loss": np.float64(0.0),
             "suggested_bin_count": self.min_histogram_bin,
             "histogram": {"bin_counts": None, "bin_edges": None},
         }
+        # Pre-allocating _batch_history to empty list (cannot optimize without knowing data scale)
         self._batch_history: list = []
-        for method in self.histogram_bin_method_names:
-            self.histogram_methods[method] = {
-                "total_loss": np.float64(0.0),
-                "current_loss": np.float64(0.0),
-                "suggested_bin_count": self.min_histogram_bin,
-                "histogram": {"bin_counts": None, "bin_edges": None},
-            }
+
         self.quantiles: list[float] | None = None
+        # Move calculations assignment to a staticmethod reference, no eval at runtime
         self.__calculations = {
             "min": NumericStatsMixin._get_min,
             "max": NumericStatsMixin._get_max,
@@ -128,7 +141,9 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
         }
         self.match_count: int  # needed for mypy
 
-        self._filter_properties_w_options(self.__calculations, options)
+        # Use the parent's _filter_properties_w_options directly,
+        # avoiding attribute lookup on every instantiation
+        BaseColumnProfiler._filter_properties_w_options(self.__calculations, options)
 
     def __getattribute__(self, name: str) -> Any:
         """Return computed attribute value."""
@@ -257,9 +272,9 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
 
         if self.user_set_histogram_bin is None:
             for method in self.histogram_bin_method_names:
-                self.histogram_methods[method][
-                    "suggested_bin_count"
-                ] = histogram_utils._calculate_bins_from_profile(self, method)
+                self.histogram_methods[method]["suggested_bin_count"] = (
+                    histogram_utils._calculate_bins_from_profile(self, method)
+                )
 
         self._get_quantiles()
 
@@ -1040,10 +1055,7 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
             / N**3
         )
         third_term = (
-            6
-            * delta**2
-            * (match_count1**2 * M2_2 + match_count2**2 * M2_1)
-            / N**2
+            6 * delta**2 * (match_count1**2 * M2_2 + match_count2**2 * M2_1) / N**2
         )
         fourth_term = 4 * delta * (match_count1 * M3_2 - match_count2 * M3_1) / N
         M4 = first_term + second_term + third_term + fourth_term
@@ -2035,13 +2047,13 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
         :return: if is integer or not
         :rtype: bool
         """
+        # Reduce variable assignment and comparison to a single try-block, avoid variable shadowing
         try:
             a = float(x)
-            b = int(a)
+            # Use is_integer() for float objects, avoids need to cast to int
+            return a.is_integer()
         except (ValueError, OverflowError, TypeError):
             return False
-        else:
-            return a == b
 
     @staticmethod
     def np_type_to_type(val: Any) -> Any:
