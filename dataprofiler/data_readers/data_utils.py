@@ -1,4 +1,5 @@
 """Contains functions for data readers."""
+
 import json
 import logging
 import os
@@ -24,7 +25,6 @@ from typing import (
 
 import boto3
 import botocore
-import dateutil
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
@@ -35,6 +35,7 @@ from typing_extensions import TypeGuard
 from .. import dp_logging, rng_utils
 from .._typing import JSONType, Url
 from .filepath_or_buffer import FileOrBufferHandler, is_stream_buffer  # NOQA
+from dateutil.parser import parse as _parse
 
 logger = dp_logging.get_child_logger(__name__)
 
@@ -52,7 +53,7 @@ def data_generator(data_list: List[str]) -> Generator[str, None, None]:
 
 
 def generator_on_file(
-    file_object: Union[StringIO, BytesIO]
+    file_object: Union[StringIO, BytesIO],
 ) -> Generator[Union[str, bytes], None, None]:
     """
     Take a file and return a generator that returns lines.
@@ -689,19 +690,20 @@ def detect_cell_type(cell: str) -> str:
     else:
 
         try:
-            # need to ingore type bc https://github.com/python/mypy/issues/8878
-            if dateutil.parser.parse(cell, fuzzy=False):  # type:ignore
-                cell_type = "date"
-        except (ValueError, OverflowError, TypeError):
-            pass
-
-        try:
-            f_cell = float(cell)
-            cell_type = "float"
-            if f_cell.is_integer():
-                cell_type = "int"
+            int(cell)
+            cell_type = "int"
         except ValueError:
-            pass
+            try:
+                f_cell = float(cell)
+                cell_type = "float"
+                if f_cell.is_integer():
+                    cell_type = "int"
+            except ValueError:
+                try:
+                    if _parse(cell, fuzzy=False):  # type:ignore
+                        cell_type = "date"
+                except (ValueError, OverflowError, TypeError):
+                    pass
 
         if cell.isupper():
             cell_type = "upstr"
@@ -726,17 +728,12 @@ def get_delimiter_regex(delimiter: str = ",", quotechar: str = ",") -> Pattern[s
 
     delimiter_regex = re.escape(str(delimiter))
     quotechar_escape = re.escape(quotechar)
-    quotechar_regex = "(?="
-    quotechar_regex += "(?:"
-    quotechar_regex += "[^" + quotechar_escape + "]*"
-    quotechar_regex += quotechar_escape
-    quotechar_regex += "[^" + quotechar_escape + "]*"
-    quotechar_regex += quotechar_escape
-    quotechar_regex += ")*"
-    quotechar_regex += "[^" + quotechar_escape + "]*"
-    quotechar_regex += "$)"
+    quotechar_regex = (
+        f"(?=(?:[^{quotechar_escape}]*{quotechar_escape}"
+        f"[^{quotechar_escape}]*{quotechar_escape})*[^{quotechar_escape}]*$)"
+    )
 
-    return re.compile(delimiter_regex + quotechar_regex)
+    return re.compile(f"{delimiter_regex}{quotechar_regex}")
 
 
 def find_nth_loc(
