@@ -257,9 +257,9 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
 
         if self.user_set_histogram_bin is None:
             for method in self.histogram_bin_method_names:
-                self.histogram_methods[method][
-                    "suggested_bin_count"
-                ] = histogram_utils._calculate_bins_from_profile(self, method)
+                self.histogram_methods[method]["suggested_bin_count"] = (
+                    histogram_utils._calculate_bins_from_profile(self, method)
+                )
 
         self._get_quantiles()
 
@@ -1009,46 +1009,94 @@ class NumericStatsMixin(BaseColumnProfiler[NumericStatsMixinT], metaclass=abc.AB
         :return: combined skewness
         :rtype: float
         """
+        # Fast checks with scalar return
         if match_count1 < 1:
             return biased_kurtosis2
-        elif match_count2 < 1:
+        if match_count2 < 1:
             return biased_kurtosis1
-        elif np.isnan(biased_kurtosis1) or np.isnan(biased_kurtosis2):
+        if np.isnan(biased_kurtosis1) or np.isnan(biased_kurtosis2):
             return np.nan
 
         delta = mean2 - mean1
         N = match_count1 + match_count2
-        M2_1 = match_count1 * biased_variance1
-        M2_2 = match_count2 * biased_variance2
-        M2 = M2_1 + M2_2 + delta**2 * match_count1 * match_count2 / N
+        # Pre-compute for efficiency
+        match_count1_f = float(match_count1)
+        match_count2_f = float(match_count2)
+        N_f = float(N)
+
+        # All further computations use float types, not int, reducing repeated conversion cost
+
+        M2_1 = match_count1_f * biased_variance1
+        M2_2 = match_count2_f * biased_variance2
+        delta2 = delta * delta
+        delta4 = delta2 * delta2
+        m1xm2 = match_count1_f * match_count2_f
+        N_inv = 1.0 / N_f
+
+        M2 = M2_1 + M2_2 + delta2 * m1xm2 * N_inv
         if not M2:
             return 0.0
 
-        M3_1: np.float64 = biased_skewness1 * np.sqrt(M2_1**3) / np.sqrt(match_count1)
-        M3_2: np.float64 = biased_skewness2 * np.sqrt(M2_2**3) / np.sqrt(match_count2)
-        M4_1 = (biased_kurtosis1 + 3) * M2_1**2 / match_count1
-        M4_2 = (biased_kurtosis2 + 3) * M2_2**2 / match_count2
+        # Avoid repeated sqrt and **3 computation, which is expensive in numpy
+        sqrt_M2_1 = np.sqrt(M2_1)
+        sqrt_M2_2 = np.sqrt(M2_2)
+        m3exp1 = sqrt_M2_1 * M2_1  # (M2_1)^(3/2)
+        m3exp2 = sqrt_M2_2 * M2_2
+
+        # Avoid division by zero if match count is small
+        sqrt_mc1 = np.sqrt(match_count1_f)
+        sqrt_mc2 = np.sqrt(match_count2_f)
+        if sqrt_mc1 != 0.0:
+            M3_1 = biased_skewness1 * m3exp1 / sqrt_mc1
+        else:
+            M3_1 = 0.0
+        if sqrt_mc2 != 0.0:
+            M3_2 = biased_skewness2 * m3exp2 / sqrt_mc2
+        else:
+            M3_2 = 0.0
+
+        mc1_sq = match_count1_f * match_count1_f
+        mc2_sq = match_count2_f * match_count2_f
+
+        # (biased_kurtosis1 + 3) * M2_1^2 / match_count1
+        if match_count1_f != 0.0:
+            M4_1 = (biased_kurtosis1 + 3) * M2_1 * M2_1 / match_count1_f
+        else:
+            M4_1 = 0.0
+        if match_count2_f != 0.0:
+            M4_2 = (biased_kurtosis2 + 3) * M2_2 * M2_2 / match_count2_f
+        else:
+            M4_2 = 0.0
 
         first_term = M4_1 + M4_2
-        second_term = (
-            delta**4
-            * (
-                match_count1
-                * match_count2
-                * (match_count1**2 - match_count1 * match_count2 + match_count2**2)
-            )
-            / N**3
-        )
+
+        # Use cached variables and algebraic expansion for terms
+        # second_term:
+        #   delta4 * (m1xm2 * (mc1_sq - m1xm2 + mc2_sq)) / N**3
+        num_second_term = m1xm2 * (mc1_sq - m1xm2 + mc2_sq)
+        N3 = N_f * N_f * N_f
+        second_term = delta4 * num_second_term / N3 if N3 != 0.0 else 0.0
+
+        # third_term:
+        #   6 * delta2 * (mc1_sq * M2_2 + mc2_sq * M2_1) / N**2
+        N2 = N_f * N_f
         third_term = (
-            6
-            * delta**2
-            * (match_count1**2 * M2_2 + match_count2**2 * M2_1)
-            / N**2
+            6.0 * delta2 * (mc1_sq * M2_2 + mc2_sq * M2_1) / N2 if N2 != 0.0 else 0.0
         )
-        fourth_term = 4 * delta * (match_count1 * M3_2 - match_count2 * M3_1) / N
+
+        # fourth_term:
+        #   4 * delta * (match_count1 * M3_2 - match_count2 * M3_1) / N
+        fourth_term = (
+            4.0 * delta * (match_count1_f * M3_2 - match_count2_f * M3_1) * N_inv
+        )
+
         M4 = first_term + second_term + third_term + fourth_term
 
-        biased_kurtosis: np.float64 = N * M4 / M2**2 - 3
+        # Avoid repeated division/M2 ** 2 calculation
+        M2_sq = M2 * M2
+        if M2_sq == 0.0:
+            return 0.0
+        biased_kurtosis: np.float64 = N_f * M4 / M2_sq - 3.0
         return biased_kurtosis
 
     @staticmethod
