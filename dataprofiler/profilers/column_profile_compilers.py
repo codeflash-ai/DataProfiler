@@ -1,4 +1,5 @@
 """For generating a report."""
+
 from __future__ import annotations
 
 import abc
@@ -88,25 +89,30 @@ class BaseCompiler(Generic[BaseCompilerT], metaclass=abc.ABCMeta):
             return
 
         enabled_profiles: list[str] | None = None
-        if options and isinstance(options, self._option_class):
+        properties = None
+        option_class_type = self._option_class
+        if options and isinstance(options, option_class_type):
             enabled_profiles = options.enabled_profiles
+            properties = options.properties  # Local caching
+
+        local_profiles = self._profiles
+        local_profilers = self._profilers
 
         # Create profiles
-        for profiler in self._profilers:
+        for profiler in local_profilers:
+            profile_type = profiler.type
 
             # Create profile if options allow for it or if there are no options
-            if enabled_profiles is None or profiler.type in enabled_profiles:
-
+            if enabled_profiles is None or profile_type in enabled_profiles:
                 profiler_options = None
-                if options and options.properties[profiler.type]:
-                    profiler_options = options.properties[profiler.type]
-
+                if properties is not None:
+                    profiler_options = properties.get(profile_type, None)
                 try:
-                    self._profiles[profiler.type] = profiler(
+                    local_profiles[profile_type] = profiler(
                         df_series.name, options=profiler_options
                     )
                 except Exception as e:
-                    profiler_utils.warn_on_profile(profiler.type, e)
+                    profiler_utils.warn_on_profile(profile_type, e)
 
         # Update profile after creation
         self.update_profile(df_series, pool)
@@ -176,10 +182,12 @@ class BaseCompiler(Generic[BaseCompilerT], metaclass=abc.ABCMeta):
         if not self._profilers:
             return None
 
+        local_profiles = self._profiles
+
         # If single process, loop and return
         if pool is None:
-            for profile_type in self._profiles:
-                self._profiles[profile_type].update(df_series)
+            for profile_type, profile in local_profiles.items():
+                profile.update(df_series)
             return self
 
         # If multiprocess, setup pool, etc
@@ -187,23 +195,23 @@ class BaseCompiler(Generic[BaseCompilerT], metaclass=abc.ABCMeta):
         multi_process_dict = {}
 
         # Spin off separate processes, where possible
-        for profile_type in self._profiles:
+        for profile_type, profile in local_profiles.items():
 
-            if self._profiles[profile_type].thread_safe:
+            if profile.thread_safe:
 
                 try:  # Add update function to be applied on the pool
                     multi_process_dict[profile_type] = pool.apply_async(
-                        self._profiles[profile_type].update, (df_series,)
+                        profile.update, (df_series,)
                     )
                 except Exception:  # Attempt again as a single process
-                    self._profiles[profile_type].thread_safe = False
+                    profile.thread_safe = False
 
-            if not self._profiles[profile_type].thread_safe:
+            if not profile.thread_safe:
                 single_process_list.append(profile_type)
 
         # Single process thread to loop through any known unsafe
         for profile_type in single_process_list:
-            self._profiles[profile_type].update(df_series)
+            local_profiles[profile_type].update(df_series)
 
         # Loop through remaining multi-processes and close them out
         single_process_list = []
@@ -211,14 +219,14 @@ class BaseCompiler(Generic[BaseCompilerT], metaclass=abc.ABCMeta):
             try:
                 returned_profile = multi_process_dict[profile_type].get()
                 if returned_profile is not None:
-                    self._profiles[profile_type] = returned_profile
+                    local_profiles[profile_type] = returned_profile
             except Exception:  # Attempt again as a single process
-                self._profiles[profile_type].thread_safe = False
+                local_profiles[profile_type].thread_safe = False
                 single_process_list.append(profile_type)
 
-                # Single process thread to loop through
+        # Single process thread to loop through
         for profile_type in single_process_list:
-            self._profiles[profile_type].update(df_series)
+            local_profiles[profile_type].update(df_series)
         return self
 
     @classmethod
