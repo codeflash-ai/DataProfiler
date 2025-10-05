@@ -407,18 +407,36 @@ class StructuredColProfiler:
         :rtype: StructuredColProfiler
         """
         profile = cls()
+        # Build up assignments with minimal re-traversal and in-place writes
+        assignments = {}
         for attr, value in data.items():
             if attr == "profiles":
+                # Avoid in-place mutation of value dict to prevent side effects
+                profiles_dict = {}
                 for profile_key, profile_value in value.items():
-                    value[profile_key] = load_compiler(profile_value, config)
+                    profiles_dict[profile_key] = load_compiler(profile_value, config)
+                assignments["profiles"] = profiles_dict
+                continue
             if attr == "options" and value is not None:
                 value = load_option(value, config)
-            if attr == "_null_values":
+            elif attr == "_null_values":
+                if not isinstance(value, dict) or any(
+                    not isinstance(v, int) and not isinstance(v, re.RegexFlag)
+                    for v in value.values()
+                ):
+                    value = {
+                        k: (re.RegexFlag(v) if v != 0 else 0) for k, v in value.items()
+                    }
+                else:
+                    # Already correct type, assignment is safe/fast
+                    value = dict(value)
+            elif attr == "null_types_index":
+                # Only convert to set if not already a set, skip redundant set conversion
                 value = {
-                    k: (re.RegexFlag(v) if v != 0 else 0) for k, v in value.items()
+                    k: v if isinstance(v, set) else set(v) for k, v in value.items()
                 }
-            if attr == "null_types_index":
-                value = {k: set(v) for k, v in value.items()}
+            assignments[attr] = value
+        for attr, value in assignments.items():
             setattr(profile, attr, value)
         return profile
 
@@ -1919,10 +1937,10 @@ class StructuredProfiler(BaseProfiler):
             col_name = other_profile._profile[i].name
             other_profile_schema[col_name].append(i)
 
-        report["global_stats"][
-            "profile_schema"
-        ] = profiler_utils.find_diff_of_dicts_with_diff_keys(
-            self_profile_schema, other_profile_schema
+        report["global_stats"]["profile_schema"] = (
+            profiler_utils.find_diff_of_dicts_with_diff_keys(
+                self_profile_schema, other_profile_schema
+            )
         )
 
         # Only find the diff of columns if the schemas are exactly the same
@@ -2101,9 +2119,9 @@ class StructuredProfiler(BaseProfiler):
                 self.options.null_replication_metrics.is_enabled
                 and i in self._null_replication_metrics
             ):
-                report["data_stats"][i][
-                    "null_replication_metrics"
-                ] = self._null_replication_metrics[i]
+                report["data_stats"][i]["null_replication_metrics"] = (
+                    self._null_replication_metrics[i]
+                )
 
         return _prepare_report(report, output_format, omit_keys)
 
@@ -2610,9 +2628,11 @@ class StructuredProfiler(BaseProfiler):
 
         total_row_sum = np.asarray(
             [
-                get_data_type_profiler(profile).sum
-                if get_data_type(profile) not in [None, "datetime"]
-                else np.nan
+                (
+                    get_data_type_profiler(profile).sum
+                    if get_data_type(profile) not in [None, "datetime"]
+                    else np.nan
+                )
                 for profile in self._profile
             ]
         )
@@ -2704,17 +2724,21 @@ class StructuredProfiler(BaseProfiler):
 
         self_row_sum = np.asarray(
             [
-                get_data_type_profiler(profile).sum
-                if get_data_type(profile)
-                else np.nan
+                (
+                    get_data_type_profiler(profile).sum
+                    if get_data_type(profile)
+                    else np.nan
+                )
                 for profile in self._profile
             ]
         )
         other_row_sum = np.asarray(
             [
-                get_data_type_profiler(profile).sum
-                if get_data_type(profile)
-                else np.nan
+                (
+                    get_data_type_profiler(profile).sum
+                    if get_data_type(profile)
+                    else np.nan
+                )
                 for profile in other._profile
             ]
         )
