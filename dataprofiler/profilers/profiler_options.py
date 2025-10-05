@@ -1379,6 +1379,7 @@ class TextProfilerOptions(BaseInspectorOptions["TextProfilerOptions"]):
         :return: list of errors (if raise_error is false)
         :rtype: list(str)
         """
+        # branch prediction: type check/fast path
         if not variable_path:
             variable_path = self.__class__.__name__
 
@@ -1387,40 +1388,43 @@ class TextProfilerOptions(BaseInspectorOptions["TextProfilerOptions"]):
         if not isinstance(self.is_case_sensitive, bool):
             errors.append(f"{variable_path}.is_case_sensitive must be a Boolean.")
 
-        if self.stop_words is not None and (
-            not isinstance(self.stop_words, list)
-            or not all(isinstance(item, str) for item in self.stop_words)
-        ):
-            errors.append(
-                "{}.stop_words must be None "
-                "or list of strings.".format(variable_path)
-            )
+        sw = self.stop_words
+        # Inline/short-circuit checks to avoid generator creation on pure None or list[str]
+        if sw is not None:
+            # avoid isinstance(..., list) for non-list, non-str sequences (most users give list)
+            if not isinstance(sw, list):
+                errors.append(
+                    f"{variable_path}.stop_words must be None or list of strings."
+                )
+            else:
+                # check all _not_ str efficiently by scanning for the first non-str
+                for item in sw:
+                    if not isinstance(item, str):
+                        errors.append(
+                            f"{variable_path}.stop_words must be None or list of strings."
+                        )
+                        break
 
-        if self.top_k_chars is not None and (
-            not isinstance(self.top_k_chars, int) or self.top_k_chars <= 0
-        ):
-            errors.append(
-                "{}.top_k_chars must be None "
-                "or positive integer.".format(variable_path)
-            )
+        tkchars = self.top_k_chars
+        if tkchars is not None:
+            if not (isinstance(tkchars, int) and tkchars > 0):
+                errors.append(
+                    f"{variable_path}.top_k_chars must be None or positive integer."
+                )
 
-        if self.top_k_words is not None and (
-            not isinstance(self.top_k_words, int) or self.top_k_words <= 0
-        ):
-            errors.append(
-                "{}.top_k_words must be None "
-                "or positive integer.".format(variable_path)
-            )
+        tkwords = self.top_k_words
+        if tkwords is not None:
+            if not (isinstance(tkwords, int) and tkwords > 0):
+                errors.append(
+                    f"{variable_path}.top_k_words must be None or positive integer."
+                )
 
+        # avoid double string concatenation for format
         if not isinstance(self.vocab, BooleanOption):
-            errors.append(
-                "{}.vocab must be a BooleanOption " "object.".format(variable_path)
-            )
+            errors.append(f"{variable_path}.vocab must be a BooleanOption object.")
 
         if not isinstance(self.words, BooleanOption):
-            errors.append(
-                "{}.words must be a BooleanOption " "object.".format(variable_path)
-            )
+            errors.append(f"{variable_path}.words must be a BooleanOption object.")
 
         return errors
 
