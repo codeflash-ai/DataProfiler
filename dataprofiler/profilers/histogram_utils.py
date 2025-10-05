@@ -7,6 +7,7 @@ https://github.com/numpy/numpy/tree/main
 A copy of the license for numpy is available here:
 https://github.com/numpy/numpy/blob/main/LICENSE.txt
 """
+
 import operator
 from typing import List, Optional, Tuple, Union
 
@@ -59,10 +60,10 @@ def _get_dataset_size_from_profile(profile):
 
     :return: dataset size
     """
-    try:
-        dataset_size = profile.match_count
-    except AttributeError:
-        dataset_size = sum(profile._stored_histogram["histogram"]["bin_counts"])
+    dataset_size = getattr(profile, "match_count", None)
+    if dataset_size is not None:
+        return dataset_size
+    dataset_size = sum(profile._stored_histogram["histogram"]["bin_counts"])
     return dataset_size
 
 
