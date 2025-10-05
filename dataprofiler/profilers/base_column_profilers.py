@@ -269,10 +269,18 @@ class BaseColumnProfiler(Generic[BaseColumnProfilerT], metaclass=abc.ABCMeta):
             config = {}
 
         class_options = config.get(cls.__name__)
-        profile: BaseColumnProfilerT = cls(data["name"], class_options)
+        profile: "BaseColumnProfilerT" = cls(data["name"], class_options)
 
         time_vals = data.pop("times")
-        setattr(profile, "times", defaultdict(float, time_vals))
+        # Setting times through direct assignment for performance
+        profile.times = defaultdict(float, time_vals)
+
+        # Use internal dict for mass assignment except for special-cased keys
+        calculations_keys = []
+        calculations_values = []
+
+        # Attributes to update in bulk (excluding known special keys)
+        bulk_update = {}
 
         for attr, value in data.items():
             if "__calculations" in attr:
@@ -282,7 +290,13 @@ class BaseColumnProfiler(Generic[BaseColumnProfilerT], metaclass=abc.ABCMeta):
                             f"Object {type(profile)} has no attribute {function}."
                         )
                     value[metric] = getattr(profile, function).__func__
-            setattr(profile, attr, value)
+                # Still assign __calculations with setattr for correct semantics
+                setattr(profile, attr, value)
+            else:
+                bulk_update[attr] = value
+
+        if bulk_update:
+            profile.__dict__.update(bulk_update)
 
         return profile
 
