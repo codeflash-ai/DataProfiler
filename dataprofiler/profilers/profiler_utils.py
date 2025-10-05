@@ -1,4 +1,5 @@
 """Contains functions for profilers."""
+
 from __future__ import annotations
 
 import collections
@@ -22,7 +23,6 @@ from typing import (
     Protocol,
     TypeVar,
     cast,
-    overload,
 )
 
 import numpy as np
@@ -413,17 +413,53 @@ class Subtractable(Protocol):
 T = TypeVar("T", bound=Subtractable)
 
 
-@overload
 def find_diff_of_numbers(
     stat1: int | float | np.float64 | np.int64 | None,
     stat2: int | float | np.float64 | np.int64 | None,
 ) -> Any:
-    ...
+    """
+    Find the difference between two stats.
+
+    If there is no difference, return "unchanged".
+    For ints/floats, returns stat1 - stat2.
+
+    :param stat1: the first statistical input
+    :type stat1: Union[int, float, np.float64, np.int64, None]
+    :param stat2: the second statistical input
+    :type stat2: Union[int, float, np.float64, np.int64, None]
+    :return: the difference of the stats
+    """
+    if stat1 is stat2:
+        # Both are the same object or both None
+        return "unchanged"
+    if stat1 is None or stat2 is None:
+        return [stat1, stat2]
+    if stat1 != stat2:
+        return stat1 - stat2
+    return "unchanged"
 
 
-@overload
 def find_diff_of_numbers(stat1: T | None, stat2: T | None) -> Any:
-    ...
+    """
+    Find the difference between two stats.
+
+    If there is no difference, return "unchanged".
+    For ints/floats, returns stat1 - stat2.
+
+    :param stat1: the first statistical input
+    :type stat1: Union[int, float, np.float64, np.int64, None]
+    :param stat2: the second statistical input
+    :type stat2: Union[int, float, np.float64, np.int64, None]
+    :return: the difference of the stats
+    """
+    if stat1 is stat2:
+        # Both are the same object or both None
+        return "unchanged"
+    if stat1 is None or stat2 is None:
+        return [stat1, stat2]
+    if stat1 != stat2:
+        return stat1 - stat2
+    return "unchanged"
 
 
 def find_diff_of_numbers(stat1, stat2):
@@ -439,11 +475,12 @@ def find_diff_of_numbers(stat1, stat2):
     :type stat2: Union[int, float, np.float64, np.int64, None]
     :return: the difference of the stats
     """
-    if stat1 is None and stat2 is None:
-        pass
-    elif stat1 is None or stat2 is None:
+    if stat1 is stat2:
+        # Both are the same object or both None
+        return "unchanged"
+    if stat1 is None or stat2 is None:
         return [stat1, stat2]
-    elif stat1 != stat2:
+    if stat1 != stat2:
         return stat1 - stat2
     return "unchanged"
 
@@ -526,16 +563,22 @@ def find_diff_of_dates(
     :return: difference in stats
     :rtype: Union[List, str]
     """
-    # We can use find_diff_of_numbers since datetime objects
-    # can be compared and subtracted naturally
     diff: datetime.timedelta | list | str = find_diff_of_numbers(stat1, stat2)
     if isinstance(diff, str):
         return diff
     if isinstance(diff, list):
-        return [None if i is None else i.strftime("%x %X") for i in diff]
+        # Avoid lookups by using list comprehension directly for formatting
+        s = []
+        for i in diff:
+            if i is None:
+                s.append(None)
+            else:
+                s.append(i.strftime("%x %X"))
+        return s
 
-    # Must be timedelta object
-    if diff.days >= 0:
+    # Must be timedelta object; use abs and pre-calc the sign for clarity
+    days = diff.days
+    if days >= 0:
         return "+" + str(diff)
     return "-" + str(abs(diff))
 
