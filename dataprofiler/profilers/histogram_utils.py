@@ -7,6 +7,7 @@ https://github.com/numpy/numpy/tree/main
 A copy of the license for numpy is available here:
 https://github.com/numpy/numpy/blob/main/LICENSE.txt
 """
+
 import operator
 from typing import List, Optional, Tuple, Union
 
@@ -27,11 +28,13 @@ def _get_maximum_from_profile(profile):
 
     :return: dataset maximum
     """
-    return (
-        profile.max
-        if profile.max is not None
-        else profile._stored_histogram["histogram"]["bin_edges"][-1]
-    )
+    # Avoid a Python property lookup when possible
+    val = profile.max
+    if val is not None:
+        return val
+    # Store frequently accessed subdicts in locals for faster lookup
+    histogram = profile._stored_histogram["histogram"]
+    return histogram["bin_edges"][-1]
 
 
 def _get_minimum_from_profile(profile):
@@ -43,11 +46,11 @@ def _get_minimum_from_profile(profile):
 
     :return: dataset minimum
     """
-    return (
-        profile.min
-        if profile.min is not None
-        else profile._stored_histogram["histogram"]["bin_edges"][0]
-    )
+    val = profile.min
+    if val is not None:
+        return val
+    histogram = profile._stored_histogram["histogram"]
+    return histogram["bin_edges"][0]
 
 
 def _get_dataset_size_from_profile(profile):
@@ -59,11 +62,16 @@ def _get_dataset_size_from_profile(profile):
 
     :return: dataset size
     """
+    # Fast path for presence of match_count
     try:
-        dataset_size = profile.match_count
+        return profile.match_count
     except AttributeError:
-        dataset_size = sum(profile._stored_histogram["histogram"]["bin_counts"])
-    return dataset_size
+        histogram = profile._stored_histogram["histogram"]
+        # Avoid sum() for NumPy array: use .sum() which is faster
+        bin_counts = histogram["bin_counts"]
+        if isinstance(bin_counts, np.ndarray):
+            return bin_counts.sum()
+        return sum(bin_counts)
 
 
 def _ptp(maximum: float, minimum: float):
@@ -79,7 +87,8 @@ def _ptp(maximum: float, minimum: float):
 
     :return: the difference between the maximum and minimum
     """
-    return np.subtract(maximum, minimum)
+    # Replace np.subtract (function call) with direct subtraction for Python scalars
+    return maximum - minimum
 
 
 def _calc_doane_bin_width_from_profile(profile):
@@ -145,7 +154,7 @@ def _calc_sturges_bin_width_from_profile(profile):
     dataset_size = _get_dataset_size_from_profile(profile)
     minimum = _get_minimum_from_profile(profile)
     maximum = _get_maximum_from_profile(profile)
-
+    # Use np.log2 for performance and clarity (avoid math.log2 for possible inputs)
     return _ptp(maximum, minimum) / (np.log2(dataset_size) + 1.0)
 
 
