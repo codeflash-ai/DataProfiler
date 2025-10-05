@@ -1,4 +1,5 @@
 """Contains functions for data readers."""
+
 import json
 import logging
 import os
@@ -24,7 +25,6 @@ from typing import (
 
 import boto3
 import botocore
-import dateutil
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
@@ -35,6 +35,8 @@ from typing_extensions import TypeGuard
 from .. import dp_logging, rng_utils
 from .._typing import JSONType, Url
 from .filepath_or_buffer import FileOrBufferHandler, is_stream_buffer  # NOQA
+from dateutil.parser import parse as _parse
+import urllib.parse
 
 logger = dp_logging.get_child_logger(__name__)
 
@@ -52,7 +54,7 @@ def data_generator(data_list: List[str]) -> Generator[str, None, None]:
 
 
 def generator_on_file(
-    file_object: Union[StringIO, BytesIO]
+    file_object: Union[StringIO, BytesIO],
 ) -> Generator[Union[str, bytes], None, None]:
     """
     Take a file and return a generator that returns lines.
@@ -689,19 +691,20 @@ def detect_cell_type(cell: str) -> str:
     else:
 
         try:
-            # need to ingore type bc https://github.com/python/mypy/issues/8878
-            if dateutil.parser.parse(cell, fuzzy=False):  # type:ignore
-                cell_type = "date"
-        except (ValueError, OverflowError, TypeError):
-            pass
-
-        try:
-            f_cell = float(cell)
-            cell_type = "float"
-            if f_cell.is_integer():
-                cell_type = "int"
+            int(cell)
+            cell_type = "int"
         except ValueError:
-            pass
+            try:
+                f_cell = float(cell)
+                cell_type = "float"
+                if f_cell.is_integer():
+                    cell_type = "int"
+            except ValueError:
+                try:
+                    if _parse(cell, fuzzy=False):  # type:ignore
+                        cell_type = "date"
+                except (ValueError, OverflowError, TypeError):
+                    pass
 
         if cell.isupper():
             cell_type = "upstr"
@@ -872,9 +875,13 @@ def is_valid_url(url_as_string: Any) -> TypeGuard[Url]:
     if not isinstance(url_as_string, str):
         return False
 
+    # Fast path: check for '://' to avoid parsing non-URLs
+    if "://" not in url_as_string:
+        return False
+
     result = urllib.parse.urlparse(url_as_string)
     # this is the minimum characteristics needed for a valid URL
-    return all([result.scheme, result.netloc])
+    return bool(result.scheme) and bool(result.netloc)
 
 
 def url_to_bytes(url_as_string: Url, options: Dict) -> BytesIO:
