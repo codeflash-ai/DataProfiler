@@ -205,10 +205,10 @@ class BooleanOption(BaseOption[BooleanOptionT]):
         if not isinstance(variable_path, str):
             raise ValueError("The variable path must be a string.")
 
-        errors: list[str] = []
+        # Since the below code is only conditional assignment, keep simple
         if not isinstance(self.is_enabled, bool):
-            errors = [f"{variable_path}.is_enabled must be a Boolean."]
-        return errors
+            return [f"{variable_path}.is_enabled must be a Boolean."]
+        return []
 
 
 class HistogramAndQuantilesOption(BooleanOption["HistogramAndQuantilesOption"]):
@@ -246,30 +246,57 @@ class HistogramAndQuantilesOption(BooleanOption["HistogramAndQuantilesOption"]):
         :return: list of errors (if raise_error is false)
         :rtype: list(str)
         """
+        # Fast path: only allocate errors list once, avoid unnecessary construction
         errors = super()._validate_helper(variable_path=variable_path)
 
         if self.bin_count_or_method is not None:
-            valid_methods = ["auto", "fd", "doane", "scott", "rice", "sturges", "sqrt"]
+            valid_methods = (
+                "auto",
+                "fd",
+                "doane",
+                "scott",
+                "rice",
+                "sturges",
+                "sqrt",
+            )  # tuple for faster set conversion
 
             value = self.bin_count_or_method
-            if isinstance(value, str):
-                value = [value]
+
+            # Use direct logic to avoid unnecessary list/str conversions
             if isinstance(value, int) and value >= 1:
-                pass  # use errors below if not a passing int
+                pass  # Valid int, nothing to do
+            elif isinstance(value, str):
+                # Single string: check validity directly
+                if value not in valid_methods:
+                    errors.append(
+                        "{}.bin_count_or_method must be an integer more "
+                        "than 1, a string, or list of strings from the "
+                        "following: {}.".format(variable_path, list(valid_methods))
+                    )
             elif (
-                not isinstance(value, list)
-                or len(value) < 1
-                or not all([isinstance(item, str) for item in value])
-                or not set(value).issubset(set(valid_methods))
+                isinstance(value, list)
+                and value
+                and all(isinstance(item, str) for item in value)
             ):
+                # Only convert valid_methods to set once, reused
+                valid_methods_set = set(valid_methods)
+                if not set(value).issubset(valid_methods_set):
+                    errors.append(
+                        "{}.bin_count_or_method must be an integer more "
+                        "than 1, a string, or list of strings from the "
+                        "following: {}.".format(variable_path, list(valid_methods))
+                    )
+            else:
                 errors.append(
                     "{}.bin_count_or_method must be an integer more "
                     "than 1, a string, or list of strings from the "
-                    "following: {}.".format(variable_path, valid_methods)
+                    "following: {}.".format(variable_path, list(valid_methods))
                 )
 
-        if self.num_quantiles is not None and (
-            not isinstance(self.num_quantiles, int) or self.num_quantiles < 1
+        # Avoid duplicate isinstance checks using local var
+        num_quantiles = self.num_quantiles
+        if num_quantiles is not None and (
+            not isinstance(num_quantiles, int) or num_quantiles < 1
         ):
             errors.append(f"{variable_path}.num_quantiles must be a positive integer.")
 
